@@ -80,3 +80,12 @@ footer {
     text-align: center;
     color: #666;
 }
+
+#progress-bar {
+    width: 100%;
+    margin-top: 10px;
+}
+
+#upload-info {
+    margin-top: 5px;
+}

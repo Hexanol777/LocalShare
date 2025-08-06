@@ -8,14 +8,19 @@
 <body>
     <div class="container">
         <h1>TempShare</h1>
-        <form method="POST" action="/upload" enctype="multipart/form-data">
+        <form id="upload-form" method="POST" action="/upload" enctype="multipart/form-data">
             <input type="file" name="file">
             <button type="submit">Upload</button>
         </form>
+        <progress id="progress-bar" value="0" max="100" style="width: 100%; display: none;"></progress>
+        <p id="upload-info" style="display: none;">
+            Speed: <span id="upload-speed">0 MB/s</span><br>
+            Estimated time: <span id="estimated-time">0 seconds</span>
+        </p>
         <h2>Recent Files (Last 24 Hours)</h2>
         {% if files %}
             <div style="overflow-x: auto;">
-                <table>
+                <table BUILDING latex artifact>
                     <thead>
                         <tr>
                             <th>File Name</th>
@@ -41,5 +46,64 @@
             <p>Files are automatically deleted after 24 hours.</p>
         </footer>
     </div>
+    <script>
+        document.getElementById('upload-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            var form = this;
+            var fileInput = form.querySelector('input[type="file"]');
+            var file = fileInput.files[0];
+            if (!file) return;
+
+            var xhr = new XMLHttpRequest();
+            xhr.open('POST', form.action, true);
+
+            var progressBar = document.getElementById('progress-bar');
+            var uploadInfo = document.getElementById('upload-info');
+            var speedElem = document.getElementById('upload-speed');
+            var timeElem = document.getElementById('estimated-time');
+
+            progressBar.style.display = 'block';
+            uploadInfo.style.display = 'block';
+
+            var startTime = Date.now();
+
+            xhr.upload.onprogress = function(event) {
+                if (event.lengthComputable) {
+                    var percent = (event.loaded / event.total) * 100;
+                    progressBar.value = percent;
+
+                    var currentTime = Date.now();
+                    var elapsed = (currentTime - startTime) / 1000; // seconds
+                    if (elapsed > 0) {
+                        var speed = event.loaded / elapsed; // bytes per second
+                        var remainingBytes = event.total - event.loaded;
+                        var estimatedTime = speed > 0 ? remainingBytes / speed : 0; // seconds
+
+                        speedElem.textContent = (speed / 1024 / 1024).toFixed(2) + ' MB/s';
+                        timeElem.textContent = estimatedTime.toFixed(0) + ' seconds';
+                    }
+                }
+            };
+
+            xhr.onload = function() {
+                if (xhr.status === 200) {
+                    location.reload(); // Refresh to show new file
+                } else {
+                    alert('Upload failed');
+                    progressBar.style.display = 'none';
+                    uploadInfo.style.display = 'none';
+                }
+            };
+
+            xhr.onerror = function() {
+                alert('Upload error');
+                progressBar.style.display = 'none';
+                uploadInfo.style.display = 'none';
+            };
+
+            var formData = new FormData(form);
+            xhr.send(formData);
+        });
+    </script>
 </body>
 </html>
