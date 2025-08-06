@@ -3,21 +3,43 @@
 <head>
     <meta charset="UTF-8">
     <title>TempShare</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-    <h1>Upload a File</h1>
-    <form method="POST" action="/upload" enctype="multipart/form-data">
-        <input type="file" name="file">
-        <input type="submit" value="Upload">
-    </form>
-    <h2>Recent Files (Last 24 Hours)</h2>
-    <ul>
-        {% for file in files %}
-            <li>
-                {{ file.original_name }} (Uploaded: {{ file.upload_time }})
-                <a href="{{ url_for('download_file', file_id=file.id) }}">Download</a>
-            </li>
-        {% endfor %}
-    </ul>
+    <div class="container">
+        <h1>TempShare</h1>
+        <form method="POST" action="/upload" enctype="multipart/form-data">
+            <input type="file" name="file">
+            <button type="submit">Upload</button>
+        </form>
+        <h2>Recent Files (Last 24 Hours)</h2>
+        {% if files %}
+            <div style="overflow-x: auto;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>File Name</th>
+                            <th>Uploaded</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for file in files %}
+                            <tr>
+                                <td>{{ file.original_name }}</td>
+                                <td>{{ file.upload_time.strftime('%b %d, %Y, %I:%M %p') }}</td>
+                                <td><a href="{{ url_for('download_file', file_id=file.id) }}" class="button">Download</a></td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <p>No files uploaded in the last 24 hours.</p>
+        {% endif %}
+        <footer>
+            <p>Files are automatically deleted after 24 hours.</p>
+        </footer>
+    </div>
 </body>
 </html>
