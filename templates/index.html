@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>TempShare</title>
+</head>
+<body>
+    <h1>Upload a File</h1>
+    <form method="POST" action="/upload" enctype="multipart/form-data">
+        <input type="file" name="file">
+        <input type="submit" value="Upload">
+    </form>
+    <h2>Recent Files (Last 24 Hours)</h2>
+    <ul>
+        {% for file in files %}
+            <li>
+                {{ file.original_name }} (Uploaded: {{ file.upload_time }})
+                <a href="{{ url_for('download_file', file_id=file.id) }}">Download</a>
+            </li>
+        {% endfor %}
+    </ul>
+</body>
+</html>
