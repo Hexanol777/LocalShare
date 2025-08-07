@@ -1,11 +1,10 @@
 import os
 import uuid
+import re
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, send_from_directory, Response
 from flask_sqlalchemy import SQLAlchemy
 from apscheduler.schedulers.background import BackgroundScheduler
-import re
-
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
@@ -13,15 +12,16 @@ app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///database.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['MAX_CONTENT_LENGTH'] = 2000 * 1024 * 1024  # 2GB limit
 
+# List of streamable file extensions (modify this to add/remove formats)
+STREAMABLE_EXTENSIONS = ['.mp4', '.mkv', '.mp3', '.flac', '.webm', '.ogg']
+
 # Ensure folders exist
 if not os.path.exists('instance'):
     os.makedirs('instance')
 if not os.path.exists(app.config['UPLOAD_FOLDER']):
     os.makedirs(app.config['UPLOAD_FOLDER'])
 
-
 db = SQLAlchemy(app)
-
 
 # Database model
 class File(db.Model):
@@ -37,7 +37,9 @@ def index():
     recent_files = File.query.filter(File.upload_time >= datetime.utcnow() - timedelta(hours=24)).order_by(File.upload_time.desc()).all()
     for file in recent_files:
         file.display_size = human_readable_size(file.file_size)
-    return render_template('index.html', files=recent_files)
+        # Compute file extension
+        file.extension = os.path.splitext(file.original_name)[1].lower()
+    return render_template('index.html', files=recent_files, streamable_extensions=STREAMABLE_EXTENSIONS)
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
@@ -74,6 +76,18 @@ def stream_file(file_id):
     if not os.path.exists(file_path):
         return "File not found", 404
 
+    # Determine MIME type based on extension
+    ext = os.path.splitext(file.original_name)[1].lower()
+    mime_types = {
+        '.mp4': 'video/mp4',
+        '.mkv': 'video/x-matroska',
+        '.webm': 'video/webm',
+        '.ogg': 'video/ogg',
+        '.mp3': 'audio/mpeg',
+        '.flac': 'audio/flac'
+    }
+    mimetype = mime_types.get(ext, 'application/octet-stream')
+
     def generate():
         with open(file_path, 'rb') as f:
             f.seek(0)
@@ -85,7 +99,7 @@ def stream_file(file_id):
 
     range_header = request.headers.get('Range', None)
     if not range_header:
-        return Response(generate(), mimetype='video/mp4')
+        return Response(generate(), mimetype=mimetype)
 
     size = os.path.getsize(file_path)
     byte1, byte2 = 0, None
@@ -99,13 +113,28 @@ def stream_file(file_id):
     resp = Response(
         generate(),
         status=206,
-        mimetype='video/mp4',
-        content_type='video/mp4',
+        mimetype=mimetype,
+        content_type=mimetype,
         direct_passthrough=True
     )
     resp.headers.add('Content-Range', f'bytes {byte1}-{byte2}/{size}')
     resp.headers.add('Accept-Ranges', 'bytes')
     return resp
+
+@app.route('/stream_page/<int:file_id>')
+def stream_page(file_id):
+    file = File.query.get_or_404(file_id)
+    ext = os.path.splitext(file.original_name)[1].lower()
+    mime_types = {
+        '.mp4': 'video/mp4',
+        '.mkv': 'video/x-matroska',
+        '.webm': 'video/webm',
+        '.ogg': 'video/ogg',
+        '.mp3': 'audio/mpeg',
+        '.flac': 'audio/flac'
+    }
+    mimetype = mime_types.get(ext, 'application/octet-stream')
+    return render_template('stream.html', file_id=file_id, mimetype=mimetype)
 
 # Helper function for human-readable file size
 def human_readable_size(size):
