@@ -37,20 +37,14 @@
                                 <td>{{ file.display_size }}</td>
                                 <td>
                                     <a href="{{ url_for('download_file', file_id=file.id) }}" class="button">Download</a>
-                                    {% if file.original_name.lower().endswith(('.mp4', '.webm', '.ogg')) %}
-                                        <a href="#stream-{{ file.id }}" class="button stream-btn" data-url="{{ url_for('stream_file', file_id=file.id) }}">Stream</a>
+                                    {% if file.extension in streamable_extensions %}
+                                        <a href="{{ url_for('stream_page', file_id=file.id) }}" class="button">Stream</a>
                                     {% endif %}
                                 </td>
                             </tr>
                         {% endfor %}
                     </tbody>
                 </table>
-            </div>
-            <div id="video-player" style="display: none; margin-top: 20px;">
-                <video controls width="100%">
-                    <source id="video-source" src="" type="video/mp4">
-                    Your browser does not support the video tag.
-                </video>
             </div>
         {% else %}
             <p>No files uploaded in the last 24 hours.</p>
@@ -127,18 +121,6 @@
                 var end = text.slice(extIndex - 10, extIndex) + text.slice(extIndex);
                 element.textContent = start + '.....' + end;
             }
-        });
-
-        // Stream button handler
-        document.querySelectorAll('.stream-btn').forEach(function(btn) {
-            btn.addEventListener('click', function() {
-                var videoPlayer = document.getElementById('video-player');
-                var videoSource = document.getElementById('video-source');
-                videoSource.src = this.getAttribute('data-url');
-                videoPlayer.style.display = 'block';
-                videoPlayer.querySelector('video').load();
-                videoPlayer.querySelector('video').play();
-            });
         });
     </script>
 </body>
