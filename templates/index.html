@@ -2,12 +2,12 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>TempShare</title>
+    <title>Local Share</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
     <div class="container">
-        <h1>TempShare</h1>
+        <h1>Local Share</h1>
         <form id="upload-form" method="POST" action="/upload" enctype="multipart/form-data">
             <input type="file" name="file">
             <button type="submit">Upload</button>
@@ -20,24 +20,37 @@
         <h2>Recent Files (Last 24 Hours)</h2>
         {% if files %}
             <div style="overflow-x: auto;">
-                <table BUILDING latex artifact>
+                <table>
                     <thead>
                         <tr>
                             <th>File Name</th>
                             <th>Uploaded</th>
+                            <th>File Size</th>
                             <th>Action</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for file in files %}
                             <tr>
-                                <td>{{ file.original_name }}</td>
+                                <td class="filename">{{ file.original_name }}</td>
                                 <td>{{ file.upload_time.strftime('%b %d, %Y, %I:%M %p') }}</td>
-                                <td><a href="{{ url_for('download_file', file_id=file.id) }}" class="button">Download</a></td>
+                                <td>{{ file.display_size }}</td>
+                                <td>
+                                    <a href="{{ url_for('download_file', file_id=file.id) }}" class="button">Download</a>
+                                    {% if file.original_name.lower().endswith(('.mp4', '.webm', '.ogg')) %}
+                                        <a href="#stream-{{ file.id }}" class="button stream-btn" data-url="{{ url_for('stream_file', file_id=file.id) }}">Stream</a>
+                                    {% endif %}
+                                </td>
                             </tr>
                         {% endfor %}
                     </tbody>
                 </table>
+            </div>
+            <div id="video-player" style="display: none; margin-top: 20px;">
+                <video controls width="100%">
+                    <source id="video-source" src="" type="video/mp4">
+                    Your browser does not support the video tag.
+                </video>
             </div>
         {% else %}
             <p>No files uploaded in the last 24 hours.</p>
@@ -87,7 +100,7 @@
 
             xhr.onload = function() {
                 if (xhr.status === 200) {
-                    location.reload(); // Refresh to show new file
+                    location.reload();
                 } else {
                     alert('Upload failed');
                     progressBar.style.display = 'none';
@@ -103,6 +116,29 @@
 
             var formData = new FormData(form);
             xhr.send(formData);
+        });
+
+        // Truncate long file names
+        document.querySelectorAll('.filename').forEach(function(element) {
+            var text = element.textContent;
+            if (text.length > 30) {
+                var start = text.slice(0, 15);
+                var extIndex = text.lastIndexOf('.');
+                var end = text.slice(extIndex - 10, extIndex) + text.slice(extIndex);
+                element.textContent = start + '.....' + end;
+            }
+        });
+
+        // Stream button handler
+        document.querySelectorAll('.stream-btn').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                var videoPlayer = document.getElementById('video-player');
+                var videoSource = document.getElementById('video-source');
+                videoSource.src = this.getAttribute('data-url');
+                videoPlayer.style.display = 'block';
+                videoPlayer.querySelector('video').load();
+                videoPlayer.querySelector('video').play();
+            });
         });
     </script>
 </body>
