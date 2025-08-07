@@ -6,6 +6,12 @@ from flask import Flask, render_template, request, redirect, url_for, send_from_
 from flask_sqlalchemy import SQLAlchemy
 from apscheduler.schedulers.background import BackgroundScheduler
 
+
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///database.db'
@@ -74,52 +80,59 @@ def stream_file(file_id):
     file = File.query.get_or_404(file_id)
     file_path = os.path.join(app.config['UPLOAD_FOLDER'], file.stored_name)
     if not os.path.exists(file_path):
+        logger.error(f"File not found: {file_path}")
         return "File not found", 404
 
-    # Determine MIME type based on extension
     ext = os.path.splitext(file.original_name)[1].lower()
     mime_types = {
         '.mp4': 'video/mp4',
-        '.mkv': 'video/x-matroska',
-        '.webm': 'video/webm',
-        '.ogg': 'video/ogg',
-        '.mp3': 'audio/mpeg',
-        '.flac': 'audio/flac'
+        '.mp3': 'audio/mpeg'
     }
     mimetype = mime_types.get(ext, 'application/octet-stream')
 
+    range_header = request.headers.get('Range', None)
+    size = os.path.getsize(file_path)
+
+    if not range_header:
+        def generate():
+            with open(file_path, 'rb') as f:
+                yield from iter(lambda: f.read(16384), b'')
+        response = Response(generate(), mimetype=mimetype, status=200)
+        response.headers['Content-Length'] = size
+        response.headers['Accept-Ranges'] = 'bytes'
+        return response
+
+    match = re.match(r'bytes=(\d+)-(\d*)', range_header)
+    if not match:
+        logger.error("Invalid range header")
+        return "Invalid range", 416
+
+    start, end = match.groups()
+    start = int(start)
+    end = int(end) if end else size - 1
+
+    if start >= size or end >= size:
+        logger.error(f"Range out of bounds: {start}-{end}, file size: {size}")
+        return "Range out of bounds", 416
+
+    length = end - start + 1
+
     def generate():
         with open(file_path, 'rb') as f:
-            f.seek(0)
-            while True:
-                chunk = f.read(8192)
+            f.seek(start)
+            remaining = length
+            while remaining > 0:
+                chunk = f.read(min(16384, remaining))
                 if not chunk:
                     break
                 yield chunk
+                remaining -= len(chunk)
 
-    range_header = request.headers.get('Range', None)
-    if not range_header:
-        return Response(generate(), mimetype=mimetype)
-
-    size = os.path.getsize(file_path)
-    byte1, byte2 = 0, None
-    match = re.match(r'bytes=(\d+)-(\d*)', range_header)
-    if match:
-        byte1, byte2 = match.groups()
-        byte1 = int(byte1)
-        byte2 = int(byte2) if byte2 else size - 1
-
-    length = byte2 - byte1 + 1
-    resp = Response(
-        generate(),
-        status=206,
-        mimetype=mimetype,
-        content_type=mimetype,
-        direct_passthrough=True
-    )
-    resp.headers.add('Content-Range', f'bytes {byte1}-{byte2}/{size}')
-    resp.headers.add('Accept-Ranges', 'bytes')
-    return resp
+    response = Response(generate(), status=206, mimetype=mimetype)
+    response.headers['Content-Range'] = f'bytes {start}-{end}/{size}'
+    response.headers['Content-Length'] = length
+    response.headers['Accept-Ranges'] = 'bytes'
+    return response
 
 @app.route('/stream_page/<int:file_id>')
 def stream_page(file_id):
