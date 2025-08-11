@@ -5,18 +5,9 @@
     <title>Stream File</title>
 </head>
 <body>
-    {% if mimetype.startswith('video/') %}
-        <video controls width="100%">
-            <source src="{{ url_for('stream_file', file_id=file_id) }}" type="{{ mimetype }}">
-            Your browser does not support the video tag.
-        </video>
-    {% elif mimetype.startswith('audio/') %}
-        <audio controls>
-            <source src="{{ url_for('stream_file', file_id=file_id) }}" type="{{ mimetype }}">
-            Your browser does not support the audio tag.
-        </audio>
-    {% else %}
-        <p>Unsupported media type.</p>
-    {% endif %}
+    <video controls width="100%">
+        <source src="{{ url_for('stream_file', file_id=file_id) }}" type="{{ mimetype }}">
+        Your browser does not support the video tag.
+    </video>
 </body>
 </html>

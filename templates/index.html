@@ -36,9 +36,9 @@
                                 <td>{{ file.upload_time.strftime('%b %d, %Y, %I:%M %p') }}</td>
                                 <td>{{ file.display_size }}</td>
                                 <td>
-                                    <a href="{{ url_for('download_file', file_id=file.id) }}" class="button">Download</a>
+                                    <a href="{{ url_for('download_file', file_id=file.id) }}" class="button download-btn">Download</a>
                                     {% if file.extension in streamable_extensions %}
-                                        <a href="{{ url_for('stream_page', file_id=file.id) }}" class="button">Stream</a>
+                                        <a href="{{ url_for('stream_page', file_id=file.id) }}" class="button stream-btn">Stream</a>
                                     {% endif %}
                                 </td>
                             </tr>
