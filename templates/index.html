@@ -2,16 +2,19 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Local Share</title>
+    <title>LocalShare</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
     <div class="container">
-        <h1>Local Share</h1>
-        <form id="upload-form" method="POST" action="/upload" enctype="multipart/form-data">
-            <input type="file" name="file">
-            <button type="submit">Upload</button>
-        </form>
+        <h1>LocalShare</h1>
+        <!-- Drag-and-Drop Area -->
+        <div id="drop-area" style="border: 2px dashed #ccc; padding: 20px; text-align: center; margin-bottom: 20px;">
+            <p>Drag & drop files or a folder here, or click to select</p>
+            <form id="upload-form" method="POST" action="/upload" enctype="multipart/form-data">
+                <input type="file" name="file" multiple webkitdirectory directory id="file-input" style="display: none;">
+            </form>
+        </div>
         <progress id="progress-bar" value="0" max="100" style="width: 100%; display: none;"></progress>
         <p id="upload-info" style="display: none;">
             Speed: <span id="upload-speed">0 MB/s</span><br>
@@ -54,41 +57,83 @@
         </footer>
     </div>
     <script>
-        document.getElementById('upload-form').addEventListener('submit', function(e) {
+        const dropArea = document.getElementById('drop-area');
+        const fileInput = document.getElementById('file-input');
+        const uploadForm = document.getElementById('upload-form');
+
+        // Prevent default drag behaviors
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            dropArea.addEventListener(eventName, preventDefaults, false);
+            document.body.addEventListener(eventName, preventDefaults, false);
+        });
+
+        function preventDefaults(e) {
             e.preventDefault();
-            var form = this;
-            var fileInput = form.querySelector('input[type="file"]');
-            var file = fileInput.files[0];
-            if (!file) return;
+            e.stopPropagation();
+        }
 
-            var xhr = new XMLHttpRequest();
-            xhr.open('POST', form.action, true);
+        // Highlight drop area
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dropArea.addEventListener(eventName, () => dropArea.style.borderColor = '#007bff', false);
+        });
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropArea.addEventListener(eventName, () => dropArea.style.borderColor = '#ccc', false);
+        });
 
-            var progressBar = document.getElementById('progress-bar');
-            var uploadInfo = document.getElementById('upload-info');
-            var speedElem = document.getElementById('upload-speed');
-            var timeElem = document.getElementById('estimated-time');
+        // Handle drop
+        dropArea.addEventListener('drop', handleDrop, false);
+
+        function handleDrop(e) {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+            if (files.length > 0) {
+                fileInput.files = files;
+                startUpload(); // Directly start AJAX upload without form submit
+            }
+        }
+
+        // Click to open file picker
+        dropArea.addEventListener('click', () => fileInput.click());
+
+        // Start upload function (shared for drop and picker)
+        function startUpload() {
+            const files = fileInput.files;
+            if (files.length === 0) return;
+
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', '/upload', true);
+
+            const progressBar = document.getElementById('progress-bar');
+            const uploadInfo = document.getElementById('upload-info');
+            const speedElem = document.getElementById('upload-speed');
+            const timeElem = document.getElementById('estimated-time');
 
             progressBar.style.display = 'block';
             uploadInfo.style.display = 'block';
+            progressBar.value = 0;
+            speedElem.textContent = '0 MB/s';
+            timeElem.textContent = 'Calculating...';
 
-            var startTime = Date.now();
+            let lastLoaded = 0;
+            let lastTime = Date.now();
 
             xhr.upload.onprogress = function(event) {
                 if (event.lengthComputable) {
-                    var percent = (event.loaded / event.total) * 100;
-                    progressBar.value = percent;
+                    const currentTime = Date.now();
+                    const timeDiff = (currentTime - lastTime) / 1000 || 0.001;
+                    const loadedDiff = event.loaded - lastLoaded;
 
-                    var currentTime = Date.now();
-                    var elapsed = (currentTime - startTime) / 1000; // seconds
-                    if (elapsed > 0) {
-                        var speed = event.loaded / elapsed; // bytes per second
-                        var remainingBytes = event.total - event.loaded;
-                        var estimatedTime = speed > 0 ? remainingBytes / speed : 0; // seconds
+                    const speed = loadedDiff / timeDiff / 1024 / 1024; // MB/s
+                    speedElem.textContent = speed.toFixed(2) + ' MB/s';
 
-                        speedElem.textContent = (speed / 1024 / 1024).toFixed(2) + ' MB/s';
-                        timeElem.textContent = estimatedTime.toFixed(0) + ' seconds';
-                    }
+                    progressBar.value = (event.loaded / event.total) * 100;
+
+                    const remaining = event.total - event.loaded;
+                    const eta = speed > 0 ? remaining / (speed * 1024 * 1024) : 0;
+                    timeElem.textContent = eta.toFixed(0) + ' seconds';
+
+                    lastLoaded = event.loaded;
+                    lastTime = currentTime;
                 }
             };
 
@@ -96,7 +141,7 @@
                 if (xhr.status === 200) {
                     location.reload();
                 } else {
-                    alert('Upload failed');
+                    alert('Upload failed: ' + xhr.status);
                     progressBar.style.display = 'none';
                     uploadInfo.style.display = 'none';
                 }
@@ -108,9 +153,19 @@
                 uploadInfo.style.display = 'none';
             };
 
-            var formData = new FormData(form);
+            const formData = new FormData();
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                // Use webkitRelativePath for folder structure, fallback to name
+                const path = file.webkitRelativePath || file.name;
+                formData.append('file', file, path);
+            }
+
             xhr.send(formData);
-        });
+        }
+
+        // Also handle when user selects via picker
+        fileInput.addEventListener('change', startUpload);
 
         // Truncate long file names
         document.querySelectorAll('.filename').forEach(function(element) {
@@ -118,7 +173,7 @@
             if (text.length > 30) {
                 var start = text.slice(0, 15);
                 var extIndex = text.lastIndexOf('.');
-                var end = text.slice(extIndex - 10, extIndex) + text.slice(extIndex);
+                var end = text.slice(extIndex - 10 < 0 ? 0 : extIndex - 10);
                 element.textContent = start + '.....' + end;
             }
         });
