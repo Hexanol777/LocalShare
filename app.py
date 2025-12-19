@@ -49,26 +49,42 @@ def index():
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
-    if 'file' not in request.files:
+    files = request.files.getlist('file')  # Get multiple files
+    if not files or all(f.filename == '' for f in files):
         return redirect(url_for('index'))
-    file = request.files['file']
-    if file.filename == '':
-        return redirect(url_for('index'))
-    if file:
-        stored_name = str(uuid.uuid4()) + os.path.splitext(file.filename)[1]
-        file_path = os.path.join(app.config['UPLOAD_FOLDER'], stored_name)
-        with open(file_path, 'wb') as f:
-            chunk_size = 8192
-            while True:
-                chunk = file.stream.read(chunk_size)
-                if not chunk:
-                    break
-                f.write(chunk)
-        file_size = os.path.getsize(file_path)
-        new_file = File(original_name=file.filename, stored_name=stored_name, file_size=file_size)
-        db.session.add(new_file)
-        db.session.commit()
-        return redirect(url_for('index'))
+
+    for file in files:
+        if file:
+            # Sanitize the relative path (file.filename includes folder path)
+            relative_path = file.filename.replace('\\', '/')
+
+            from werkzeug.utils import secure_filename  # Import added here
+            # Split path into segments and secure each against ../ attacks
+            path_parts = relative_path.split('/')
+            safe_parts = [secure_filename(part) for part in path_parts if part]
+            safe_path = '/'.join(safe_parts)
+
+            # Full path on server
+            full_path = os.path.join(app.config['UPLOAD_FOLDER'], safe_path)
+
+            # Create directory if it doesn't exist
+            os.makedirs(os.path.dirname(full_path), exist_ok=True)
+
+            # Save the file
+            file.save(full_path)
+
+            # Get size after saving
+            file_size = os.path.getsize(full_path)
+
+            # Store in DB using the original relative path as name
+            new_file = File(original_name=relative_path, stored_name=safe_path, file_size=file_size)
+            db.session.add(new_file)
+
+    db.session.commit()
+    return redirect(url_for('index'))
+
+    db.session.commit()
+    return redirect(url_for('index'))
 
 @app.route('/download/<int:file_id>')
 def download_file(file_id):
