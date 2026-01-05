@@ -95,59 +95,70 @@ def download_file(file_id):
 def stream_file(file_id):
     file = File.query.get_or_404(file_id)
     file_path = os.path.join(app.config['UPLOAD_FOLDER'], file.stored_name)
+    
     if not os.path.exists(file_path):
-        logger.error(f"File not found: {file_path}")
         return "File not found", 404
 
+    file_size = os.path.getsize(file_path)
+    
+    # Determine MIME type
     ext = os.path.splitext(file.original_name)[1].lower()
     mime_types = {
         '.mp4': 'video/mp4',
-        '.mp3': 'audio/mpeg'
+        '.mkv': 'video/x-matroska',
+        '.webm': 'video/webm',
+        '.ogg': 'video/ogg',
+        '.mp3': 'audio/mpeg',
+        '.flac': 'audio/flac'
     }
     mimetype = mime_types.get(ext, 'application/octet-stream')
 
     range_header = request.headers.get('Range', None)
-    size = os.path.getsize(file_path)
-
+    
     if not range_header:
+        # Full file request
         def generate():
             with open(file_path, 'rb') as f:
-                yield from iter(lambda: f.read(16384), b'')
-        response = Response(generate(), mimetype=mimetype, status=200)
-        response.headers['Content-Length'] = size
+                while chunk := f.read(8192):
+                    yield chunk
+        
+        response = Response(generate(), mimetype=mimetype)
+        response.headers['Content-Length'] = file_size
         response.headers['Accept-Ranges'] = 'bytes'
+        response.headers['Content-Disposition'] = f'inline; filename="{file.original_name}"'
         return response
 
+    # Parse Range header (e.g., "bytes=0-1023" or "bytes=500-")
+    import re
     match = re.match(r'bytes=(\d+)-(\d*)', range_header)
     if not match:
-        logger.error("Invalid range header")
-        return "Invalid range", 416
+        return "Invalid Range Header", 416
 
-    start, end = match.groups()
-    start = int(start)
-    end = int(end) if end else size - 1
+    start = int(match.group(1))
+    end = int(match.group(2)) if match.group(2) else file_size - 1
 
-    if start >= size or end >= size:
-        logger.error(f"Range out of bounds: {start}-{end}, file size: {size}")
-        return "Range out of bounds", 416
+    if start >= file_size or end >= file_size or start > end:
+        return "Range Not Satisfiable", 416
 
     length = end - start + 1
 
-    def generate():
+    def generate_range():
         with open(file_path, 'rb') as f:
             f.seek(start)
             remaining = length
             while remaining > 0:
-                chunk = f.read(min(16384, remaining))
+                chunk_size = min(8192, remaining)
+                chunk = f.read(chunk_size)
                 if not chunk:
                     break
                 yield chunk
                 remaining -= len(chunk)
 
-    response = Response(generate(), status=206, mimetype=mimetype)
-    response.headers['Content-Range'] = f'bytes {start}-{end}/{size}'
+    response = Response(generate_range(), status=206, mimetype=mimetype)
+    response.headers['Content-Range'] = f'bytes {start}-{end}/{file_size}'
     response.headers['Content-Length'] = length
     response.headers['Accept-Ranges'] = 'bytes'
+    response.headers['Content-Disposition'] = f'inline; filename="{file.original_name}"'
     return response
 
 @app.route('/stream_page/<int:file_id>')
