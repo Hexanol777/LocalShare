@@ -113,6 +113,10 @@ def stream_file(file_id):
     }
     mimetype = mime_types.get(ext, 'application/octet-stream')
 
+    # Safely encode filename for Content-Disposition (handles Unicode like Japanese characters)
+    from urllib.parse import quote
+    encoded_filename = quote(file.original_name)
+
     range_header = request.headers.get('Range', None)
     
     if not range_header:
@@ -125,10 +129,10 @@ def stream_file(file_id):
         response = Response(generate(), mimetype=mimetype)
         response.headers['Content-Length'] = file_size
         response.headers['Accept-Ranges'] = 'bytes'
-        response.headers['Content-Disposition'] = f'inline; filename="{file.original_name}"'
+        response.headers['Content-Disposition'] = f'inline; filename="{encoded_filename}"'
         return response
 
-    # Parse Range header (e.g., "bytes=0-1023" or "bytes=500-")
+    # Parse Range header
     import re
     match = re.match(r'bytes=(\d+)-(\d*)', range_header)
     if not match:
@@ -158,7 +162,7 @@ def stream_file(file_id):
     response.headers['Content-Range'] = f'bytes {start}-{end}/{file_size}'
     response.headers['Content-Length'] = length
     response.headers['Accept-Ranges'] = 'bytes'
-    response.headers['Content-Disposition'] = f'inline; filename="{file.original_name}"'
+    response.headers['Content-Disposition'] = f'inline; filename="{encoded_filename}"'
     return response
 
 @app.route('/stream_page/<int:file_id>')
