@@ -6,7 +6,7 @@ body {
 }
 
 .container {
-    max-width: 1000px; /* Increased from 800px to give more room */
+    max-width: 1000px;
     margin: 20px auto;
     padding: 20px;
     background-color: white;
@@ -36,14 +36,14 @@ form button {
 }
 
 table {
-    width: 100%; /* Ensure table takes full container width */
+    width: 100%;
     border-collapse: collapse;
     margin-top: 20px;
-    table-layout: fixed; /* Helps distribute space evenly */
+    table-layout: fixed;
 }
 
 table th, table td {
-    padding: 12px; /* Increased padding for less clutter */
+    padding: 12px;
     border: 1px solid #ddd;
 }
 
@@ -61,37 +61,41 @@ table th:not(:first-child), table td:not(:first-child) {
 
 table td:first-child {
     text-align: left;
-    max-width: 400px; /* Increased from 300px for more file name space */
+    max-width: 400px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
 a.button {
-    display: inline-block;
-    padding: 8px 15px; /* Increased padding for larger, consistent buttons */
+    display: block; /* Makes buttons stack vertically */
+    padding: 8px 15px;
     color: white;
     text-decoration: none;
     border-radius: 3px;
-    margin-right: 15px; /* Increased from 10px for better spacing */
-    min-width: 80px; /* Fixed minimum width for uniform size */
+    margin-bottom: 8px; /* Adds vertical space between buttons */
+    min-width: 80px;
     text-align: center;
 }
 
+a.button:last-child {
+    margin-bottom: 0; /* Removes bottom margin from the last button */
+}
+
 a.download-btn {
-    background-color: #28a745; /* Green for Download button */
+    background-color: #28a745; /* Green for Download */
 }
 
 a.download-btn:hover {
-    background-color: #218838; /* Darker green on hover */
+    background-color: #218838;
 }
 
 a.stream-btn {
-    background-color: #007bff; /* Blue for Stream button */
+    background-color: #007bff; /* Blue for Stream */
 }
 
 a.stream-btn:hover {
-    background-color: #0056b3; /* Darker blue on hover */
+    background-color: #0056b3;
 }
 
 footer {
