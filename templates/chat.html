@@ -1,33 +1,102 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>LocalShare Chat</title>
+    <meta charset="UTF-8">
+    <title>LAN Chat</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+
     <style>
-        #chat-box {
-            height: 70vh;
-            overflow-y: auto;
-            border: 1px solid #ccc;
-            padding: 10px;
-            margin-bottom: 10px;
-            background: #fafafa;
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+            background: #f4f4f4;
         }
+
+        .chat-wrapper {
+            max-width: 900px;
+            margin: 30px auto;
+            padding: 0 15px;
+        }
+
+        .chat-header {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+
+        .chat-box {
+            height: 65vh;
+            background: #ffffff;
+            border: 1px solid #d0d0d0;
+            border-radius: 6px;
+            padding: 12px;
+            overflow-y: auto;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+
         .msg {
             margin-bottom: 6px;
+            line-height: 1.4;
+            word-wrap: break-word;
         }
+
         .sender {
-            font-weight: bold;
+            font-weight: 600;
+            margin-right: 4px;
+        }
+
+        .input-bar {
+            display: flex;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        .input-bar input {
+            flex: 1;
+            padding: 8px 10px;
+            font-size: 0.95rem;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+            outline: none;
+        }
+
+        .input-bar input:focus {
+            border-color: #4a90e2;
+        }
+
+        .input-bar button {
+            padding: 8px 16px;
+            font-size: 0.95rem;
+            border-radius: 4px;
+            border: none;
+            cursor: pointer;
+            background: #4a90e2;
+            color: white;
+            font-weight: 500;
+        }
+
+        .input-bar button:hover {
+            background: #357abd;
+        }
+
+        .input-bar button:active {
+            background: #2d6399;
         }
     </style>
 </head>
 <body>
 
-<h2>LAN Chat</h2>
+<div class="chat-wrapper">
+    <div class="chat-header">LAN Chat</div>
 
-<div id="chat-box"></div>
+    <div id="chat-box" class="chat-box"></div>
 
-<input type="text" id="message" placeholder="Type a message…" style="width:80%">
-<button onclick="sendMessage()">Send</button>
+    <div class="input-bar">
+        <input type="text" id="message" placeholder="Type a message…" autocomplete="off">
+        <button onclick="sendMessage()">Send</button>
+    </div>
+</div>
 
 <script>
 let lastId = 0;
@@ -40,7 +109,7 @@ function fetchMessages() {
             data.messages.forEach(m => {
                 const div = document.createElement('div');
                 div.className = 'msg';
-                div.innerHTML = `<span class="sender">${m.sender}</span> ${m.content}`;
+                div.innerHTML = `<span class="sender">${m.sender}</span>${m.content}`;
                 box.appendChild(div);
                 lastId = m.id;
                 box.scrollTop = box.scrollHeight;
@@ -50,8 +119,8 @@ function fetchMessages() {
 
 function sendMessage() {
     const input = document.getElementById('message');
-    const msg = input.value;
-    if (!msg.trim()) return;
+    const msg = input.value.trim();
+    if (!msg) return;
 
     fetch('/chat/send', {
         method: 'POST',
@@ -61,6 +130,10 @@ function sendMessage() {
 
     input.value = '';
 }
+
+document.getElementById('message').addEventListener('keydown', e => {
+    if (e.key === 'Enter') sendMessage();
+});
 
 setInterval(fetchMessages, 2000);
 fetchMessages();
