@@ -49,42 +49,52 @@ def index():
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
-    files = request.files.getlist('file')  # Get multiple files
+    files = request.files.getlist('file')
     if not files or all(f.filename == '' for f in files):
         return redirect(url_for('index'))
 
+    from werkzeug.utils import secure_filename
+
+    # One UUID per upload request
+    upload_id = uuid.uuid4().hex
+
     for file in files:
-        if file:
-            # Sanitize the relative path (file.filename includes folder path)
-            relative_path = file.filename.replace('\\', '/')
+        if not file:
+            continue
 
-            from werkzeug.utils import secure_filename  # Import added here
-            # Split path into segments and secure each against ../ attacks
-            path_parts = relative_path.split('/')
-            safe_parts = [secure_filename(part) for part in path_parts if part]
-            safe_path = '/'.join(safe_parts)
+        # Normalize and sanitize relative path
+        relative_path = file.filename.replace('\\', '/')
 
-            # Full path on server
-            full_path = os.path.join(app.config['UPLOAD_FOLDER'], safe_path)
+        path_parts = relative_path.split('/')
+        safe_parts = [secure_filename(part) for part in path_parts if part]
 
-            # Create directory if it doesn't exist
-            os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        if not safe_parts:
+            continue
 
-            # Save the file
-            file.save(full_path)
+        # Prefix with UUID to avoid collisions
+        safe_path = os.path.join(upload_id, *safe_parts)
 
-            # Get size after saving
-            file_size = os.path.getsize(full_path)
+        full_path = os.path.join(app.config['UPLOAD_FOLDER'], safe_path)
 
-            # Store in DB using the original relative path as name
-            new_file = File(original_name=relative_path, stored_name=safe_path, file_size=file_size)
-            db.session.add(new_file)
+        # Creaate directory if it doesn't exist
+        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+
+        # Save file
+        file.save(full_path)
+
+        file_size = os.path.getsize(full_path)
+
+        # save original relative path for display and UUID path for storage
+        new_file = File(
+            original_name=relative_path,
+            stored_name=safe_path,
+            file_size=file_size
+        )
+        db.session.add(new_file)
 
     db.session.commit()
     return redirect(url_for('index'))
 
-    db.session.commit()
-    return redirect(url_for('index'))
 
 @app.route('/download/<int:file_id>')
 def download_file(file_id):
