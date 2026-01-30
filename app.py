@@ -37,6 +37,14 @@ class File(db.Model):
     upload_time = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     file_size = db.Column(db.Integer, nullable=False)
 
+# chat Database model
+class ChatMessage(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    sender_ip = db.Column(db.String(45), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    timestamp = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+
 # Routes
 @app.route('/')
 def index():
@@ -190,6 +198,56 @@ def stream_page(file_id):
     mimetype = mime_types.get(ext, 'application/octet-stream')
     return render_template('stream.html', file_id=file_id, mimetype=mimetype)
 
+# Main endpoint for the LAN chatroom
+@app.route('/chat')
+def chat():
+    return render_template('chat.html')
+
+# POST endpoint to send messages
+@app.route('/chat/send', methods=['POST'])
+def chat_send():
+    data = request.get_json()
+    if not data or not data.get('message'):
+        return {'status': 'error'}, 400
+
+    msg = data['message'].strip()
+    if not msg:
+        return {'status': 'ok'}
+
+    sender_ip = request.remote_addr or 'unknown'
+
+    chat_msg = ChatMessage(
+        sender_ip=sender_ip,
+        content=msg
+    )
+    db.session.add(chat_msg)
+    db.session.commit()
+
+    return {'status': 'ok'}
+
+# Message pollind endpoint
+@app.route('/chat/messages')
+def chat_messages():
+    since_id = request.args.get('since', type=int, default=0)
+
+    messages = ChatMessage.query \
+        .filter(ChatMessage.id > since_id) \
+        .order_by(ChatMessage.id.asc()) \
+        .all()
+
+    return {
+        'messages': [
+            {
+                'id': m.id,
+                'sender': f"{m.sender_ip}:",
+                'content': m.content,
+                'timestamp': m.timestamp.isoformat()
+            }
+            for m in messages
+        ]
+    }
+
+
 # Helper function for human-readable file size
 def human_readable_size(size):
     for unit in ['B', 'KB', 'MB', 'GB']:
@@ -201,12 +259,19 @@ def human_readable_size(size):
 # Cleanup function
 def cleanup_old_files():
     with app.app_context():
-        old_files = File.query.filter(File.upload_time < datetime.utcnow() - timedelta(hours=24)).all()
+        cutoff = datetime.utcnow() - timedelta(hours=24)
+
+        # Files
+        old_files = File.query.filter(File.upload_time < cutoff).all()
         for file in old_files:
             file_path = os.path.join(app.config['UPLOAD_FOLDER'], file.stored_name)
             if os.path.exists(file_path):
                 os.remove(file_path)
             db.session.delete(file)
+
+        # Chat messages
+        ChatMessage.query.filter(ChatMessage.timestamp < cutoff).delete()
+
         db.session.commit()
 
 # Schedule cleanup

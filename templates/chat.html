@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>LocalShare Chat</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        #chat-box {
+            height: 70vh;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            padding: 10px;
+            margin-bottom: 10px;
+            background: #fafafa;
+        }
+        .msg {
+            margin-bottom: 6px;
+        }
+        .sender {
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+<h2>LAN Chat</h2>
+
+<div id="chat-box"></div>
+
+<input type="text" id="message" placeholder="Type a message…" style="width:80%">
+<button onclick="sendMessage()">Send</button>
+
+<script>
+let lastId = 0;
+
+function fetchMessages() {
+    fetch(`/chat/messages?since=${lastId}`)
+        .then(r => r.json())
+        .then(data => {
+            const box = document.getElementById('chat-box');
+            data.messages.forEach(m => {
+                const div = document.createElement('div');
+                div.className = 'msg';
+                div.innerHTML = `<span class="sender">${m.sender}</span> ${m.content}`;
+                box.appendChild(div);
+                lastId = m.id;
+                box.scrollTop = box.scrollHeight;
+            });
+        });
+}
+
+function sendMessage() {
+    const input = document.getElementById('message');
+    const msg = input.value;
+    if (!msg.trim()) return;
+
+    fetch('/chat/send', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({message: msg})
+    });
+
+    input.value = '';
+}
+
+setInterval(fetchMessages, 2000);
+fetchMessages();
+</script>
+
+</body>
+</html>
