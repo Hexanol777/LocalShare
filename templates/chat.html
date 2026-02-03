@@ -20,9 +20,10 @@
         }
 
         .chat-header {
-            font-size: 1.5rem;
-            font-weight: 600;
-            margin-bottom: 10px;
+           font-size: 1.5rem;
+           font-weight: 600;
+           margin-bottom: 12px;
+           text-align: center;
         }
 
         .chat-box {
@@ -39,6 +40,13 @@
             margin-bottom: 6px;
             line-height: 1.4;
             word-wrap: break-word;
+        }
+
+        .timestamp {
+        color: #666;
+        font-size: 0.85rem;
+        margin-right: 6px;
+        font-family: monospace;
         }
 
         .sender {
@@ -109,7 +117,16 @@ function fetchMessages() {
             data.messages.forEach(m => {
                 const div = document.createElement('div');
                 div.className = 'msg';
-                div.innerHTML = `<span class="sender">${m.sender}</span>${m.content}`;
+                const time = new Date(m.timestamp).toLocaleTimeString([], {
+                  hour: '2-digit',
+                  minute: '2-digit'
+                });
+
+                div.innerHTML = `
+                  <span class="timestamp">[${time}]</span>
+                  <span class="sender">${m.sender}</span>
+                  ${m.content}
+                `;
                 box.appendChild(div);
                 lastId = m.id;
                 box.scrollTop = box.scrollHeight;
