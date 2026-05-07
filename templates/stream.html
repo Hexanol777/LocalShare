@@ -2,12 +2,153 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Stream File</title>
+    <title>Stream with Watch Together</title>
+    <style>
+        body {
+            font-family: system-ui, sans-serif;
+            margin: 20px;
+            background: #111;
+            color: #eee;
+        }
+        video {
+            width: 100%;
+            max-height: 80vh;
+            background: black;
+        }
+        .controls {
+            margin-top: 15px;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        button {
+            padding: 8px 16px;
+            font-size: 1rem;
+            cursor: pointer;
+        }
+        .status {
+            font-family: monospace;
+            font-size: 0.9rem;
+            margin-left: auto;
+        }
+    </style>
 </head>
 <body>
-    <video controls width="100%">
+    <video id="videoPlayer" controls width="100%">
         <source src="{{ url_for('stream_file', file_id=file_id) }}" type="{{ mimetype }}">
         Your browser does not support the video tag.
     </video>
+
+    <div class="controls">
+        <button id="playBtn">▶ Play</button>
+        <button id="pauseBtn">⏸ Pause</button>
+        <span class="status" id="syncStatus">🟢 Synced</span>
+    </div>
+
+    <script>
+        const video = document.getElementById('videoPlayer');
+        const fileId = {{ file_id }};
+        let lastServerState = null;
+        let syncing = false;          // prevent feedback loops
+        let pollInterval = 2000;      // milliseconds
+        let localAdjustPending = false;
+
+        // Helper: fetch current watch state from server
+        async function fetchWatchState() {
+            try {
+                const resp = await fetch(`/watch/state/${fileId}`);
+                if (!resp.ok) throw new Error('State fetch failed');
+                const state = await resp.json();
+                lastServerState = state;
+                applyServerState(state);
+            } catch (err) {
+                console.warn('Poll error:', err);
+                document.getElementById('syncStatus').innerHTML = '⚠️ Connection issue';
+            }
+        }
+
+        // Apply server state to local video (without sending new actions)
+        function applyServerState(state) {
+            if (syncing) return;
+            syncing = true;
+
+            // Calculate effective position if server says "playing"
+            let targetPosition = state.position;
+            if (state.playing && state.updated_at) {
+                const nowSec = Date.now() / 1000;
+                const elapsed = nowSec - state.updated_at;
+                targetPosition = state.position + elapsed;
+            }
+
+            // Avoid unnecessary seeks (threshold 0.5 seconds)
+            const currentTime = video.currentTime;
+            if (Math.abs(currentTime - targetPosition) > 0.5) {
+                video.currentTime = targetPosition;
+                document.getElementById('syncStatus').innerHTML = '🎬 Syncing seek...';
+                setTimeout(() => {
+                    if (!syncing) return;
+                    document.getElementById('syncStatus').innerHTML = '🟢 Synced';
+                }, 500);
+            }
+
+            // Sync play/pause state
+            if (state.playing && video.paused) {
+                video.play().catch(e => console.log('autoplay blocked?', e));
+                document.getElementById('syncStatus').innerHTML = '▶️ Playing';
+            } else if (!state.playing && !video.paused) {
+                video.pause();
+                document.getElementById('syncStatus').innerHTML = '⏸ Paused';
+            }
+
+            syncing = false;
+        }
+
+        // Send an action to server (play/pause/seek)
+        async function sendAction(action, position = null) {
+            if (syncing) return;  // don't send actions triggered by sync
+
+            const payload = { action };
+            if (action === 'seek' && position !== null) {
+                payload.position = position;
+            }
+
+            try {
+                const resp = await fetch(`/watch/action/${fileId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (!resp.ok) console.warn('Action send failed');
+                // After sending, the next poll will bring the confirmed state
+            } catch (err) {
+                console.warn('Action error:', err);
+            }
+        }
+
+        // Event listeners (only trigger when user interacts, not during sync)
+        video.addEventListener('play', () => {
+            if (!syncing) sendAction('play');
+        });
+        video.addEventListener('pause', () => {
+            if (!syncing) sendAction('pause');
+        });
+        video.addEventListener('seeked', () => {
+            if (!syncing) sendAction('seek', video.currentTime);
+        });
+
+        // Manual buttons (in case video controls are used, but events already catch)
+        document.getElementById('playBtn').addEventListener('click', () => {
+            video.play();
+        });
+        document.getElementById('pauseBtn').addEventListener('click', () => {
+            video.pause();
+        });
+
+        // Poll for state changes
+        setInterval(fetchWatchState, pollInterval);
+        // Initial fetch after a short delay (let video load)
+        setTimeout(fetchWatchState, 500);
+    </script>
 </body>
 </html>
