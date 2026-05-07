@@ -1,5 +1,7 @@
 import os
 import uuid
+import threading
+import time
 import re
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, send_from_directory, Response
@@ -17,6 +19,10 @@ app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///database.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['MAX_CONTENT_LENGTH'] = 2000 * 1024 * 1024  # 2GB limit
+
+# Watch Together state
+watch_sessions = {}
+watch_lock = threading.Lock()
 
 # List of streamable file extensions (modify this to add/remove formats)
 STREAMABLE_EXTENSIONS = ['.mp4', '.mkv', '.mp3', '.flac', '.webm', '.ogg']
@@ -55,6 +61,8 @@ def index():
         file.extension = os.path.splitext(file.original_name)[1].lower()
     return render_template('index.html', files=recent_files, streamable_extensions=STREAMABLE_EXTENSIONS)
 
+
+# ----- DOWNLOAD/UPLOAD ENDPOINTS -----
 @app.route('/upload', methods=['POST'])
 def upload_file():
     files = request.files.getlist('file')
@@ -109,6 +117,8 @@ def download_file(file_id):
     file = File.query.get_or_404(file_id)
     return send_from_directory(app.config['UPLOAD_FOLDER'], file.stored_name, as_attachment=True, download_name=file.original_name)
 
+
+# ----- STREAM ENDPOINTS -----
 @app.route('/stream/<int:file_id>')
 def stream_file(file_id):
     file = File.query.get_or_404(file_id)
@@ -198,6 +208,7 @@ def stream_page(file_id):
     mimetype = mime_types.get(ext, 'application/octet-stream')
     return render_template('stream.html', file_id=file_id, mimetype=mimetype)
 
+# ----- CHAT ENDPOINTS -----
 # Main endpoint for the LAN chatroom
 @app.route('/chat')
 def chat():
@@ -248,6 +259,76 @@ def chat_messages():
     }
 
 
+# ----- WATCH ALONG ENDPOINTS -----
+@app.route('/watch/state/<int:file_id>')
+def watch_state(file_id):
+    """Get the current watch state for a file."""
+    with watch_lock:
+        sess = watch_sessions.get(file_id)
+        if not sess:
+            # Return default state (paused at 0)
+            return {
+                'playing': False,
+                'position': 0.0,
+                'updated_at': time.time(),
+                'last_action': 'pause'
+            }
+        # Return a copy to avoid accidental modification
+        return {
+            'playing': sess['playing'],
+            'position': sess['position'],
+            'updated_at': sess['updated_at'],
+            'last_action': sess.get('last_action', 'pause')
+        } 
+
+@app.route('/watch/action/<int:file_id>', methods=['POST'])
+def watch_action(file_id):
+    """Update the watch state: play, pause, or seek."""
+    data = request.get_json()
+    if not data or 'action' not in data:
+        return {'error': 'missing action'}, 400
+
+    action = data['action']
+    now = time.time()
+
+    with watch_lock:
+        # Get or create session
+        sess = watch_sessions.get(file_id)
+        if not sess:
+            sess = {
+                'playing': False,
+                'position': 0.0,
+                'updated_at': now,
+                'last_action': 'pause'
+            }
+            watch_sessions[file_id] = sess
+
+        # Update based on action
+        if action == 'play':
+            sess['playing'] = True
+            sess['updated_at'] = now
+            sess['last_action'] = 'play'
+        elif action == 'pause':
+            sess['playing'] = False
+            # When pausing, keep the current position (no change)
+            sess['updated_at'] = now
+            sess['last_action'] = 'pause'
+        elif action == 'seek':
+            new_pos = data.get('position', 0.0)
+            if not isinstance(new_pos, (int, float)) or new_pos < 0:
+                return {'error': 'invalid position'}, 400
+            sess['position'] = new_pos
+            sess['updated_at'] = now
+            sess['last_action'] = 'seek'
+        else:
+            return {'error': 'unknown action'}, 400
+
+        # Also update timestamp for inactivity cleanup
+        sess['last_active'] = now
+
+    return {'status': 'ok'}
+
+
 # Helper function for human-readable file size
 def human_readable_size(size):
     for unit in ['B', 'KB', 'MB', 'GB']:
@@ -256,8 +337,9 @@ def human_readable_size(size):
         size /= 1024
     return f"{size:.2f} TB"
 
-# Cleanup function
+# Cleanup functions
 def cleanup_old_files():
+    """Remove old files after a specified amount of time"""
     with app.app_context():
         cutoff = datetime.utcnow() - timedelta(hours=24)
 
@@ -274,9 +356,21 @@ def cleanup_old_files():
 
         db.session.commit()
 
+def cleanup_watch_sessions():
+    """Remove watch sessions that have been inactive for > 10 minutes."""
+    now = time.time()
+    with watch_lock:
+        expired = [fid for fid, sess in watch_sessions.items()
+                   if now - sess.get('updated_at', 0) > 600]  # 10 minutes
+        for fid in expired:
+            del watch_sessions[fid]
+        if expired:
+            logger.info(f"Cleaned up {len(expired)} inactive watch sessions")
+
 # Schedule cleanup
 scheduler = BackgroundScheduler()
 scheduler.add_job(cleanup_old_files, 'interval', hours=1)
+scheduler.add_job(cleanup_watch_sessions, 'interval', minutes=15)
 scheduler.start()
 
 if __name__ == '__main__':
