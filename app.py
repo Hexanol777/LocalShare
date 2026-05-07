@@ -283,7 +283,6 @@ def watch_state(file_id):
 
 @app.route('/watch/action/<int:file_id>', methods=['POST'])
 def watch_action(file_id):
-    """Update the watch state: play, pause, or seek."""
     data = request.get_json()
     if not data or 'action' not in data:
         return {'error': 'missing action'}, 400
@@ -292,7 +291,6 @@ def watch_action(file_id):
     now = time.time()
 
     with watch_lock:
-        # Get or create session
         sess = watch_sessions.get(file_id)
         if not sess:
             sess = {
@@ -303,16 +301,22 @@ def watch_action(file_id):
             }
             watch_sessions[file_id] = sess
 
-        # Update based on action
         if action == 'play':
             sess['playing'] = True
+            # Optionally update position if provided (e.g., after seek or drift correction)
+            if 'position' in data:
+                sess['position'] = float(data['position'])
             sess['updated_at'] = now
             sess['last_action'] = 'play'
+
         elif action == 'pause':
             sess['playing'] = False
-            # When pausing, keep the current position (no change)
+            # Crucial: update position to the current video time when paused
+            if 'position' in data:
+                sess['position'] = float(data['position'])
             sess['updated_at'] = now
             sess['last_action'] = 'pause'
+
         elif action == 'seek':
             new_pos = data.get('position', 0.0)
             if not isinstance(new_pos, (int, float)) or new_pos < 0:
@@ -320,10 +324,11 @@ def watch_action(file_id):
             sess['position'] = new_pos
             sess['updated_at'] = now
             sess['last_action'] = 'seek'
+            # Keep playing state as-is (do not change)
+
         else:
             return {'error': 'unknown action'}, 400
 
-        # Also update timestamp for inactivity cleanup
         sess['last_active'] = now
 
     return {'status': 'ok'}
