@@ -106,13 +106,13 @@
 
         // Send an action to server (play/pause/seek)
         async function sendAction(action, position = null) {
-            if (syncing) return;  // don't send actions triggered by sync
-
+            if (syncing) return;
+        
             const payload = { action };
-            if (action === 'seek' && position !== null) {
+            if (position !== null) {
                 payload.position = position;
             }
-
+        
             try {
                 const resp = await fetch(`/watch/action/${fileId}`, {
                     method: 'POST',
@@ -120,7 +120,6 @@
                     body: JSON.stringify(payload)
                 });
                 if (!resp.ok) console.warn('Action send failed');
-                // After sending, the next poll will bring the confirmed state
             } catch (err) {
                 console.warn('Action error:', err);
             }
@@ -128,10 +127,10 @@
 
         // Event listeners (only trigger when user interacts, not during sync)
         video.addEventListener('play', () => {
-            if (!syncing) sendAction('play');
+            if (!syncing) sendAction('play', video.currentTime);
         });
         video.addEventListener('pause', () => {
-            if (!syncing) sendAction('pause');
+            if (!syncing) sendAction('pause', video.currentTime);
         });
         video.addEventListener('seeked', () => {
             if (!syncing) sendAction('seek', video.currentTime);
