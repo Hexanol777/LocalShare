@@ -1,7 +1,7 @@
 # LocalShare
 
-LocalShare is a lightweight homeserver management interface that is made with simplicity and performance in mind.
-A lightweight, web-based file-sharing application designed for temporary uploads and downloads with real-time streaming support. Built using Flask, SQLite, HTML, CSS, and JavaScript, this project enables users to upload files, stream media (e.g., MP4, MKV, MP3, FLAC), and download them within a 24-hour window.
+
+A lightweight, web-based file-sharing application designed for temporary uploads and downloads with real-time streaming support. this project enables users to upload files and stream media (e.g., MP4, MKV, MP3, FLAC)
 
 ## Features
 - Upload files with real-time progress tracking (up to 2 GB limit, adjustable).
