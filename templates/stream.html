@@ -39,11 +39,11 @@
             margin-left: 10px;
         }
         .viewer-panel {
-        margin-top: 20px;
-        padding: 12px;
-        background: #1a1a2e;
-        border-radius: 8px;
-        font-size: 0.85rem;
+            margin-top: 20px;
+            padding: 12px;
+            background: #1a1a2e;
+            border-radius: 8px;
+            font-size: 0.85rem;
         }
         .viewer-panel h4 {
             margin: 0 0 8px 0;
@@ -87,78 +87,63 @@
     </div>
 
     <div class="viewer-panel" id="viewerPanel" style="display: none;">
-    <h4>👥 Viewers (<span id="viewerCount">0</span>) 
-        <span style="font-size:0.7rem; color:#666;" id="viewerDebug"></span>
-    </h4>
-    <div id="viewerList" class="viewer-list">
-        <span style="color:#666;">Loading...</span>
-    </div>
+        <h4>👥 Viewers (<span id="viewerCount">0</span>)</h4>
+        <div id="viewerList" class="viewer-list">
+            <span style="color:#666;">Loading...</span>
+        </div>
     </div>
 
     <script>
         const video = document.getElementById('videoPlayer');
         const fileId = {{ file_id }};
+        
+        // State variables
         let syncing = false;
+        let isCorrecting = false;
         let lastSentAction = null;
         let lastSentPosition = null;
         let lastSentTime = 0;
-        
-        // Configuration - adjust these for your network
-        const POLL_INTERVAL = 3000;  // Interval between syncing polls
-        const SEEK_THRESHOLD = 2;   // Increase on networks with high latency
-        const DRIFT_CORRECTION = 1.5;  // Only correct if drift > 1.5s when playing
-        
         let lastServerState = null;
-        let lastPollTime = 0;
-        let estimatedLatency = 0;
-        
-        // Track if we're currently correcting (to avoid feedback loops)
-        let isCorrecting = false;
-        
-        // Debounce seek events
+        let clientLatency = 50;
+        let heartbeatInterval = null;
         let seekTimeout = null;
-
-        // Client stats vars
-        let viewerPollInterval = null;
-        let clientLatency = 50; // Start with default 50ms
-        let pingSentTime = 0;
         
-        // Helper: fetch current watch state from server
+        // Configuration
+        const POLL_INTERVAL = 3000;
+        const SEEK_THRESHOLD = 2.0;
+        const DRIFT_CORRECTION = 1.5;
+        
+        // Helper: fetch current watch state
         async function fetchWatchState() {
             const startTime = Date.now();
             try {
                 const resp = await fetch(`/watch/state/${fileId}`);
                 if (!resp.ok) throw new Error('State fetch failed');
-                const state = await resp.json();
                 
-                // Calculate latency (round trip)
                 const rtt = Date.now() - startTime;
-                estimatedLatency = estimatedLatency * 0.7 + (rtt / 2) * 0.3;
-                document.getElementById('latencyInfo').innerHTML = `📡 ${Math.round(estimatedLatency)}ms`;
+                clientLatency = clientLatency * 0.7 + (rtt / 2) * 0.3;
+                document.getElementById('latencyInfo').innerHTML = `📡 ${Math.round(clientLatency)}ms`;
                 
+                const state = await resp.json();
                 lastServerState = state;
                 applyServerState(state);
-                lastPollTime = Date.now() / 1000;
             } catch (err) {
                 console.warn('Poll error:', err);
                 document.getElementById('syncStatus').innerHTML = '⚠️ Connection issue';
             }
         }
         
-        // Calculate effective position (with interpolation for playing state)
+        // Calculate effective position with interpolation
         function getEffectivePosition(state, nowSec = null) {
             if (!nowSec) nowSec = Date.now() / 1000;
-            let position = state.position;
-            
             if (state.playing && state.updated_at) {
                 const elapsed = Math.max(0, nowSec - state.updated_at);
-                position = state.position + elapsed;
+                return state.position + elapsed;
             }
-            
-            return position;
+            return state.position;
         }
         
-        // Apply server state to local video (with latency-aware tolerance)
+        // Apply server state to local video
         function applyServerState(state) {
             if (syncing || isCorrecting) return;
             
@@ -167,121 +152,57 @@
             const currentPosition = video.currentTime;
             const difference = targetPosition - currentPosition;
             
-            // Determine if we should seek
             let shouldSeek = false;
             let seekReason = '';
             
             if (Math.abs(difference) > SEEK_THRESHOLD) {
-                // Big difference - always seek
                 shouldSeek = true;
                 seekReason = `big drift ${difference.toFixed(2)}s`;
             } else if (state.playing && Math.abs(difference) > DRIFT_CORRECTION) {
-                // Moderate drift while playing - seek
                 shouldSeek = true;
                 seekReason = `drift ${difference.toFixed(2)}s`;
             } else if (!state.playing && Math.abs(difference) > 0.5) {
-                // Paused - be more strict since user might be precisely positioned
                 shouldSeek = true;
                 seekReason = `paused drift ${difference.toFixed(2)}s`;
             }
             
-            if (shouldSeek) {
+            if (shouldSeek && targetPosition >= 0) {
                 isCorrecting = true;
-                video.currentTime = Math.max(0, targetPosition);
+                video.currentTime = targetPosition;
                 document.getElementById('syncStatus').innerHTML = `🎬 Syncing (${seekReason})`;
-                
                 setTimeout(() => {
                     isCorrecting = false;
-                    if (!syncing) {
-                        document.getElementById('syncStatus').innerHTML = '🟢 Synced';
-                    }
+                    if (!syncing) document.getElementById('syncStatus').innerHTML = '🟢 Synced';
                 }, 500);
             }
             
-            // Sync play/pause state
+            // Sync play/pause (but don't trigger play/pause events that cause feedback)
             if (state.playing && video.paused) {
-                video.play().catch(e => console.log('autoplay blocked?', e));
-                if (!shouldSeek) {
-                    document.getElementById('syncStatus').innerHTML = '▶️ Playing';
-                }
+                video.play().catch(e => console.log('autoplay blocked:', e));
+                if (!shouldSeek) document.getElementById('syncStatus').innerHTML = '▶️ Playing';
             } else if (!state.playing && !video.paused) {
                 video.pause();
-                if (!shouldSeek) {
-                    document.getElementById('syncStatus').innerHTML = '⏸ Paused';
-                }
+                if (!shouldSeek) document.getElementById('syncStatus').innerHTML = '⏸ Paused';
             }
         }
         
-        // Send action to server (with debouncing and rate limiting)
+        // Send action to server (single definition)
         async function sendAction(action, position = null) {
             if (syncing || isCorrecting) return;
             
-            // Rate limit: don't send more than once per 200ms
-            const now = Date.now();
-            if (now - lastSentTime < 200 && action === 'seek') {
-                return;
-            }
-            
-            // Don't send duplicate actions
-            if (lastSentAction === action && 
-                (action !== 'seek' || Math.abs(lastSentPosition - position) < 0.3)) {
-                return;
-            }
-            
-            syncing = true;
-            lastSentAction = action;
-            lastSentPosition = position;
-            lastSentTime = now;
-            
-            const payload = { action };
-            if (position !== null) {
-                payload.position = position;
-            }
-            
-            try {
-                await fetch(`/watch/action/${fileId}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-            } catch (err) {
-                console.warn('Action error:', err);
-            }
-            
-            syncing = false;
-        }
-
-        // Measure latency to server
-        async function measureLatency() {
-            const start = Date.now();
-            try {
-                await fetch(`/watch/state/${fileId}`, { method: 'HEAD' });
-                const rtt = Date.now() - start;
-                clientLatency = clientLatency * 0.7 + (rtt / 2) * 0.3;
-                document.getElementById('latencyInfo').innerHTML = `📡 ${Math.round(clientLatency)}ms`;
-                return Math.round(clientLatency);
-            } catch (e) {
-                return clientLatency;
-            }
-        }
-
-        // Send latency with every action
-        async function sendAction(action, position = null) {
-            if (syncing || isCorrecting) return;
-
             const now = Date.now();
             if (now - lastSentTime < 200 && action === 'seek') return;
             if (lastSentAction === action && 
                 (action !== 'seek' || Math.abs(lastSentPosition - position) < 0.3)) return;
-
+            
             syncing = true;
             lastSentAction = action;
             lastSentPosition = position;
             lastSentTime = now;
-
+            
             const payload = { action, latency: Math.round(clientLatency) };
             if (position !== null) payload.position = position;
-
+            
             try {
                 await fetch(`/watch/action/${fileId}`, {
                     method: 'POST',
@@ -291,7 +212,7 @@
             } catch (err) {
                 console.warn('Action error:', err);
             }
-
+            
             syncing = false;
         }
         
@@ -309,10 +230,8 @@
                 if (data.count > 0) {
                     viewerPanel.style.display = 'block';
                     viewerList.innerHTML = data.viewers.map(v => {
-                        const isSelf = v.ip === '{{ request.remote_addr }}' || 
-                                      (v.ip.includes('127.0.0.1') && window.location.hostname === 'localhost');
                         const shortIp = v.ip.replace('::ffff:', '').replace('::1', 'localhost');
-                        return `<div class="viewer-tag ${isSelf ? 'self' : ''}">
+                        return `<div class="viewer-tag">
                                     <span class="ip">${shortIp}</span>
                                     <span class="ping">📡 ${v.latency}ms</span>
                                 </div>`;
@@ -325,47 +244,6 @@
             }
         }
         
-        // Periodically measure latency and update
-        setInterval(async () => {
-            await measureLatency();
-            // Don't spam latency updates to server, just measure locally
-        }, 5000);
-        
-        // Poll for viewers every 3 seconds
-        setInterval(fetchViewers, 3000);
-        
-        // Modify existing fetchWatchState to also measure latency
-        async function fetchWatchState() {
-            const startTime = Date.now();
-            try {
-                const resp = await fetch(`/watch/state/${fileId}`);
-                if (!resp.ok) throw new Error('State fetch failed');
-                const rtt = Date.now() - startTime;
-                clientLatency = clientLatency * 0.7 + (rtt / 2) * 0.3;
-                document.getElementById('latencyInfo').innerHTML = `📡 ${Math.round(clientLatency)}ms`;
-                
-                const state = await resp.json();
-                lastServerState = state;
-                applyServerState(state);
-                lastPollTime = Date.now() / 1000;
-            } catch (err) {
-                console.warn('Poll error:', err);
-                document.getElementById('syncStatus').innerHTML = '⚠️ Connection issue';
-            }
-        }
-        
-        // Also send latency with heartbeat
-        // Update the heartbeat interval to send latency
-        video.addEventListener('play', () => {
-            if (heartbeatInterval) clearInterval(heartbeatInterval);
-            heartbeatInterval = setInterval(() => {
-                if (video.paused) return;
-                if (!syncing && !isCorrecting) {
-                    sendAction('seek', video.currentTime);
-                }
-            }, 10000);
-        });
-
         // Debounced seek handler
         function handleSeek() {
             if (seekTimeout) clearTimeout(seekTimeout);
@@ -376,17 +254,36 @@
             }, 100);
         }
         
+        // Heartbeat while playing
+        function startHeartbeat() {
+            if (heartbeatInterval) clearInterval(heartbeatInterval);
+            heartbeatInterval = setInterval(() => {
+                if (!video.paused && !syncing && !isCorrecting) {
+                    sendAction('seek', video.currentTime);
+                }
+            }, 10000);
+        }
+        
+        function stopHeartbeat() {
+            if (heartbeatInterval) {
+                clearInterval(heartbeatInterval);
+                heartbeatInterval = null;
+            }
+        }
+        
         // Event listeners
         video.addEventListener('play', () => {
             if (!syncing && !isCorrecting) {
                 sendAction('play', video.currentTime);
             }
+            startHeartbeat();
         });
         
         video.addEventListener('pause', () => {
             if (!syncing && !isCorrecting) {
                 sendAction('pause', video.currentTime);
             }
+            stopHeartbeat();
         });
         
         video.addEventListener('seeked', handleSeek);
@@ -400,29 +297,10 @@
             if (!syncing && !isCorrecting) video.pause();
         });
         
-        // Periodic polling
+        // Start polling
         setInterval(fetchWatchState, POLL_INTERVAL);
+        setInterval(fetchViewers, 3000);
         setTimeout(fetchWatchState, 500);
-        
-        // Optional: Send periodic "heartbeat" position while playing
-        let heartbeatInterval = null;
-        video.addEventListener('play', () => {
-            if (heartbeatInterval) clearInterval(heartbeatInterval);
-            heartbeatInterval = setInterval(() => {
-                if (video.paused) return;
-                if (!syncing && !isCorrecting) {
-                    // Send position every 10 seconds to keep drift in check
-                    sendAction('seek', video.currentTime);
-                }
-            }, 10000);
-        });
-        
-        video.addEventListener('pause', () => {
-            if (heartbeatInterval) {
-                clearInterval(heartbeatInterval);
-                heartbeatInterval = null;
-            }
-        });
     </script>
 </body>
 </html>
