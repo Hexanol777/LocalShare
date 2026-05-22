@@ -38,6 +38,40 @@
             color: #aaa;
             margin-left: 10px;
         }
+        .viewer-panel {
+        margin-top: 20px;
+        padding: 12px;
+        background: #1a1a2e;
+        border-radius: 8px;
+        font-size: 0.85rem;
+        }
+        .viewer-panel h4 {
+            margin: 0 0 8px 0;
+            font-size: 0.9rem;
+            color: #aaa;
+        }
+        .viewer-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .viewer-tag {
+            background: #2d2d44;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-family: monospace;
+            font-size: 0.75rem;
+        }
+        .viewer-tag .ip {
+            color: #8bc34a;
+        }
+        .viewer-tag .ping {
+            color: #ffb74d;
+        }
+        .viewer-tag.self {
+            background: #3d2e4a;
+            border-left: 2px solid #ff9800;
+        }
     </style>
 </head>
 <body>
@@ -51,6 +85,16 @@
         <span class="status" id="syncStatus">🟢 Synced</span>
         <span class="latency-badge" id="latencyInfo"></span>
     </div>
+
+    <div class="viewer-panel" id="viewerPanel" style="display: none;">
+    <h4>👥 Viewers (<span id="viewerCount">0</span>) 
+        <span style="font-size:0.7rem; color:#666;" id="viewerDebug"></span>
+    </h4>
+    <div id="viewerList" class="viewer-list">
+        <span style="color:#666;">Loading...</span>
+    </div>
+    </div>
+
     <script>
         const video = document.getElementById('videoPlayer');
         const fileId = {{ file_id }};
@@ -73,6 +117,11 @@
         
         // Debounce seek events
         let seekTimeout = null;
+
+        // Client stats vars
+        let viewerPollInterval = null;
+        let clientLatency = 50; // Start with default 50ms
+        let pingSentTime = 0;
         
         // Helper: fetch current watch state from server
         async function fetchWatchState() {
@@ -201,7 +250,122 @@
             
             syncing = false;
         }
+
+        // Measure latency to server
+        async function measureLatency() {
+            const start = Date.now();
+            try {
+                await fetch(`/watch/state/${fileId}`, { method: 'HEAD' });
+                const rtt = Date.now() - start;
+                clientLatency = clientLatency * 0.7 + (rtt / 2) * 0.3;
+                document.getElementById('latencyInfo').innerHTML = `📡 ${Math.round(clientLatency)}ms`;
+                return Math.round(clientLatency);
+            } catch (e) {
+                return clientLatency;
+            }
+        }
+
+        // Send latency with every action
+        async function sendAction(action, position = null) {
+            if (syncing || isCorrecting) return;
+
+            const now = Date.now();
+            if (now - lastSentTime < 200 && action === 'seek') return;
+            if (lastSentAction === action && 
+                (action !== 'seek' || Math.abs(lastSentPosition - position) < 0.3)) return;
+
+            syncing = true;
+            lastSentAction = action;
+            lastSentPosition = position;
+            lastSentTime = now;
+
+            const payload = { action, latency: Math.round(clientLatency) };
+            if (position !== null) payload.position = position;
+
+            try {
+                await fetch(`/watch/action/${fileId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+            } catch (err) {
+                console.warn('Action error:', err);
+            }
+
+            syncing = false;
+        }
         
+        // Fetch active viewers
+        async function fetchViewers() {
+            try {
+                const resp = await fetch(`/watch/viewers/${fileId}`);
+                if (!resp.ok) throw new Error('Viewer fetch failed');
+                const data = await resp.json();
+                
+                document.getElementById('viewerCount').innerHTML = data.count;
+                const viewerList = document.getElementById('viewerList');
+                const viewerPanel = document.getElementById('viewerPanel');
+                
+                if (data.count > 0) {
+                    viewerPanel.style.display = 'block';
+                    viewerList.innerHTML = data.viewers.map(v => {
+                        const isSelf = v.ip === '{{ request.remote_addr }}' || 
+                                      (v.ip.includes('127.0.0.1') && window.location.hostname === 'localhost');
+                        const shortIp = v.ip.replace('::ffff:', '').replace('::1', 'localhost');
+                        return `<div class="viewer-tag ${isSelf ? 'self' : ''}">
+                                    <span class="ip">${shortIp}</span>
+                                    <span class="ping">📡 ${v.latency}ms</span>
+                                </div>`;
+                    }).join('');
+                } else {
+                    viewerPanel.style.display = 'none';
+                }
+            } catch (err) {
+                console.warn('Viewer fetch error:', err);
+            }
+        }
+        
+        // Periodically measure latency and update
+        setInterval(async () => {
+            await measureLatency();
+            // Don't spam latency updates to server, just measure locally
+        }, 5000);
+        
+        // Poll for viewers every 3 seconds
+        setInterval(fetchViewers, 3000);
+        
+        // Modify existing fetchWatchState to also measure latency
+        async function fetchWatchState() {
+            const startTime = Date.now();
+            try {
+                const resp = await fetch(`/watch/state/${fileId}`);
+                if (!resp.ok) throw new Error('State fetch failed');
+                const rtt = Date.now() - startTime;
+                clientLatency = clientLatency * 0.7 + (rtt / 2) * 0.3;
+                document.getElementById('latencyInfo').innerHTML = `📡 ${Math.round(clientLatency)}ms`;
+                
+                const state = await resp.json();
+                lastServerState = state;
+                applyServerState(state);
+                lastPollTime = Date.now() / 1000;
+            } catch (err) {
+                console.warn('Poll error:', err);
+                document.getElementById('syncStatus').innerHTML = '⚠️ Connection issue';
+            }
+        }
+        
+        // Also send latency with heartbeat
+        // Update the heartbeat interval to send latency
+        video.addEventListener('play', () => {
+            if (heartbeatInterval) clearInterval(heartbeatInterval);
+            heartbeatInterval = setInterval(() => {
+                if (video.paused) return;
+                if (!syncing && !isCorrecting) {
+                    sendAction('seek', video.currentTime);
+                }
+            }, 10000);
+        });
+
         // Debounced seek handler
         function handleSeek() {
             if (seekTimeout) clearTimeout(seekTimeout);

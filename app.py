@@ -20,12 +20,15 @@ app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///database.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['MAX_CONTENT_LENGTH'] = 2000 * 1024 * 1024  # 2GB limit
 
+
 # Watch Together states
 watch_sessions = {}
 watch_lock = threading.Lock()
 client_last_update = defaultdict(float)
 client_update_lock = threading.Lock()
 RATE_LIMIT_SECONDS = 0.5  # Minimum 500ms between updates from same client for same file to prevent seek storms
+viewers_data = defaultdict(dict)  # {file_id: {client_ip: {'last_seen': timestamp, 'latency': avg_ms}}}
+viewers_lock = threading.Lock()
 
 
 # List of streamable file extensions (modify this to add/remove formats)
@@ -294,15 +297,18 @@ def watch_action(file_id):
     action = data['action']
     now = time.time()
     
-    # Rate limiting: prevent too frequent updates from the same client for the same file
+    # Rate limiting
     client_ip = request.remote_addr or 'unknown'
     rate_limit_key = f"{client_ip}:{file_id}"
+    
+    # Track viewer latency (estimate from RTT if available)
+    client_latency = data.get('latency', 50)  # Default 50ms if not sent
+    update_viewer_info(file_id, client_ip, client_latency)
     
     with client_update_lock:
         last_update = client_last_update.get(rate_limit_key, 0)
         if now - last_update < RATE_LIMIT_SECONDS:
-            # Silently ignore rate-limited requests (don't return error to avoid client retries)
-            return {'status': 'rate_limited', 'message': 'Update too frequent'}, 429
+            return {'status': 'rate_limited'}, 429
         client_last_update[rate_limit_key] = now
     
     # Optional: Clean up old rate limit entries periodically (add to cleanup_watch_sessions)
@@ -359,6 +365,28 @@ def watch_action(file_id):
 
     return {'status': 'ok'}
 
+@app.route('/watch/viewers/<int:file_id>')
+def watch_viewers(file_id):
+    """Get list of active viewers for a watch session"""
+    with viewers_lock:
+        viewers = viewers_data.get(file_id, {})
+        now = time.time()
+        # Only include viewers active in last 30 seconds
+        active = {
+            ip: info for ip, info in viewers.items()
+            if now - info.get('last_seen', 0) < 30
+        }
+        return {
+            'count': len(active),
+            'viewers': [
+                {
+                    'ip': ip,
+                    'latency': round(info['latency'], 1),
+                    'active_seconds': round(now - info.get('first_seen', now), 1)
+                }
+                for ip, info in active.items()
+            ]
+        }
 
 # Helper function for human-readable file size
 def human_readable_size(size):
@@ -367,6 +395,20 @@ def human_readable_size(size):
             return f"{size:.2f} {unit}"
         size /= 1024
     return f"{size:.2f} TB"
+
+def update_viewer_info(file_id, client_ip, latency_ms):
+    """Track active viewers and their latency"""
+    with viewers_lock:
+        now = time.time()
+        viewers = viewers_data[file_id]
+        
+        if client_ip not in viewers:
+            viewers[client_ip] = {'last_seen': now, 'latency': latency_ms, 'first_seen': now}
+        else:
+            # Exponential moving average for latency
+            old_latency = viewers[client_ip]['latency']
+            viewers[client_ip]['latency'] = old_latency * 0.7 + latency_ms * 0.3
+            viewers[client_ip]['last_seen'] = now
 
 # Cleanup functions
 def cleanup_old_files():
@@ -388,15 +430,28 @@ def cleanup_old_files():
         db.session.commit()
 
 def cleanup_watch_sessions():
-    """Remove watch sessions that have been inactive for > 10 minutes."""
+    """Remove watch sessions and viewers inactive for > 10 minutes"""
     now = time.time()
+    
+    # Clean sessions
     with watch_lock:
-        expired = [fid for fid, sess in watch_sessions.items()
-                   if now - sess.get('updated_at', 0) > 600]  # 10 minutes
-        for fid in expired:
+        expired_sessions = [fid for fid, sess in watch_sessions.items()
+                           if now - sess.get('last_active', 0) > 600]
+        for fid in expired_sessions:
             del watch_sessions[fid]
-        if expired:
-            logger.info(f"Cleaned up {len(expired)} inactive watch sessions")
+        if expired_sessions:
+            logger.info(f"Cleaned up {len(expired_sessions)} inactive watch sessions")
+    
+    # Clean stale viewers (inactive > 30 seconds)
+    with viewers_lock:
+        for fid in list(viewers_data.keys()):
+            viewers = viewers_data[fid]
+            stale = [ip for ip, info in viewers.items() 
+                    if now - info.get('last_seen', 0) > 30]
+            for ip in stale:
+                del viewers[ip]
+            if not viewers and fid not in watch_sessions:
+                del viewers_data[fid]
 
 def cleanup_rate_limits():
     """Remove rate limit entries older than 1 minute"""
