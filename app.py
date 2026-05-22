@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, send_from_directory, Response
 from flask_sqlalchemy import SQLAlchemy
 from apscheduler.schedulers.background import BackgroundScheduler
-
+from collections import defaultdict
 
 import logging
 logging.basicConfig(level=logging.INFO)
@@ -20,9 +20,13 @@ app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///database.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['MAX_CONTENT_LENGTH'] = 2000 * 1024 * 1024  # 2GB limit
 
-# Watch Together state
+# Watch Together states
 watch_sessions = {}
 watch_lock = threading.Lock()
+client_last_update = defaultdict(float)
+client_update_lock = threading.Lock()
+RATE_LIMIT_SECONDS = 0.5  # Minimum 500ms between updates from same client for same file to prevent seek storms
+
 
 # List of streamable file extensions (modify this to add/remove formats)
 STREAMABLE_EXTENSIONS = ['.mp4', '.mkv', '.mp3', '.flac', '.webm', '.ogg']
@@ -289,6 +293,20 @@ def watch_action(file_id):
 
     action = data['action']
     now = time.time()
+    
+    # Rate limiting: prevent too frequent updates from the same client for the same file
+    client_ip = request.remote_addr or 'unknown'
+    rate_limit_key = f"{client_ip}:{file_id}"
+    
+    with client_update_lock:
+        last_update = client_last_update.get(rate_limit_key, 0)
+        if now - last_update < RATE_LIMIT_SECONDS:
+            # Silently ignore rate-limited requests (don't return error to avoid client retries)
+            return {'status': 'rate_limited', 'message': 'Update too frequent'}, 429
+        client_last_update[rate_limit_key] = now
+    
+    # Optional: Clean up old rate limit entries periodically (add to cleanup_watch_sessions)
+    # This prevents the dict from growing forever
 
     with watch_lock:
         sess = watch_sessions.get(file_id)
@@ -301,30 +319,38 @@ def watch_action(file_id):
             }
             watch_sessions[file_id] = sess
 
-        if action == 'play':
+        # For seek actions, only update if the position change is significant
+        if action == 'seek':
+            new_pos = data.get('position', 0.0)
+            if not isinstance(new_pos, (int, float)) or new_pos < 0:
+                return {'error': 'invalid position'}, 400
+            
+            # Don't update if the position change is less than 0.5 seconds (prevents micro-seeks)
+            if abs(sess['position'] - new_pos) < 0.5 and sess['playing']:
+                return {'status': 'ignored', 'message': 'Position change too small'}
+
+            sess['position'] = new_pos
+            sess['updated_at'] = now
+            sess['last_action'] = 'seek'
+            # Keep playing state as-is (do not change)
+
+        elif action == 'play':
             sess['playing'] = True
-            # Optionally update position if provided (e.g., after seek or drift correction)
+            # Only update position if provided and significantly different
             if 'position' in data:
-                sess['position'] = float(data['position'])
+                new_pos = float(data['position'])
+                if abs(sess['position'] - new_pos) > 0.3:
+                    sess['position'] = new_pos
             sess['updated_at'] = now
             sess['last_action'] = 'play'
 
         elif action == 'pause':
             sess['playing'] = False
-            # Crucial: update position to the current video time when paused
+            # Update position to the current video time when paused
             if 'position' in data:
                 sess['position'] = float(data['position'])
             sess['updated_at'] = now
             sess['last_action'] = 'pause'
-
-        elif action == 'seek':
-            new_pos = data.get('position', 0.0)
-            if not isinstance(new_pos, (int, float)) or new_pos < 0:
-                return {'error': 'invalid position'}, 400
-            sess['position'] = new_pos
-            sess['updated_at'] = now
-            sess['last_action'] = 'seek'
-            # Keep playing state as-is (do not change)
 
         else:
             return {'error': 'unknown action'}, 400
@@ -371,6 +397,18 @@ def cleanup_watch_sessions():
             del watch_sessions[fid]
         if expired:
             logger.info(f"Cleaned up {len(expired)} inactive watch sessions")
+
+def cleanup_rate_limits():
+    """Remove rate limit entries older than 1 minute"""
+    now = time.time()
+    with client_update_lock:
+        expired = [key for key, timestamp in client_last_update.items()
+                   if now - timestamp > 60]  # 1 minute expiration
+        for key in expired:
+            del client_last_update[key]
+        if expired:
+            logger.info(f"Cleaned up {len(expired)} rate limit entries")
+
 
 # Schedule cleanup
 scheduler = BackgroundScheduler()
