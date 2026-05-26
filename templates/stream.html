@@ -82,6 +82,7 @@
     <div class="controls">
         <button id="playBtn">▶ Play</button>
         <button id="pauseBtn">⏸ Pause</button>
+        <button id="syncBtn">🔄 Force Sync</button>
         <span class="status" id="syncStatus">🟢 Synced</span>
         <span class="latency-badge" id="latencyInfo"></span>
     </div>
@@ -295,6 +296,45 @@
         
         document.getElementById('pauseBtn').addEventListener('click', () => {
             if (!syncing && !isCorrecting) video.pause();
+        });
+
+        // Force sync button
+        document.getElementById('syncBtn').addEventListener('click', async () => {
+            if (syncing || isCorrecting) return;
+
+            try {
+                const resp = await fetch(`/watch/sync/${fileId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                if (!resp.ok) throw new Error('Sync failed');
+
+                const data = await resp.json();
+
+                // Immediately apply the synced position
+                isCorrecting = true;
+                video.currentTime = data.position;
+
+                if (data.playing && video.paused) {
+                    video.play();
+                } else if (!data.playing && !video.paused) {
+                    video.pause();
+                }
+
+                document.getElementById('syncStatus').innerHTML = '🔄 Force synced!';
+                setTimeout(() => {
+                    isCorrecting = false;
+                    document.getElementById('syncStatus').innerHTML = '🟢 Synced';
+                }, 1000);
+
+            } catch (err) {
+                console.warn('Force sync error:', err);
+                document.getElementById('syncStatus').innerHTML = '⚠️ Sync failed';
+                setTimeout(() => {
+                    if (!syncing) document.getElementById('syncStatus').innerHTML = '🟢 Synced';
+                }, 2000);
+            }
         });
         
         // Start polling
