@@ -388,6 +388,23 @@ def watch_viewers(file_id):
             ]
         }
 
+@app.route('/watch/sync/<int:file_id>', methods=['POST'])
+def watch_force_sync(file_id):
+    """Force all clients to sync to current server position"""
+    with watch_lock:
+        sess = watch_sessions.get(file_id)
+        if not sess:
+            return {'error': 'no active session'}, 404
+        
+        # Update timestamp to now so interpolation resets
+        sess['updated_at'] = time.time()
+        # Keep current position and playing state
+        logger.info(f"Forced sync on file {file_id} at position {sess['position']}")
+        
+    return {'status': 'ok', 'position': sess['position'], 'playing': sess['playing']}
+gi
+
+
 # Helper function for human-readable file size
 def human_readable_size(size):
     for unit in ['B', 'KB', 'MB', 'GB']:
@@ -409,6 +426,8 @@ def update_viewer_info(file_id, client_ip, latency_ms):
             old_latency = viewers[client_ip]['latency']
             viewers[client_ip]['latency'] = old_latency * 0.7 + latency_ms * 0.3
             viewers[client_ip]['last_seen'] = now
+
+
 
 # Cleanup functions
 def cleanup_old_files():
@@ -463,6 +482,7 @@ def cleanup_rate_limits():
             del client_last_update[key]
         if expired:
             logger.info(f"Cleaned up {len(expired)} rate limit entries")
+
 
 
 # Schedule cleanup
