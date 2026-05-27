@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <title>Stream with Watch Together</title>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
     <style>
         body {
             font-family: system-ui, sans-serif;
@@ -68,10 +69,6 @@
         .viewer-tag .ping {
             color: #ffb74d;
         }
-        .viewer-tag.self {
-            background: #3d2e4a;
-            border-left: 2px solid #ff9800;
-        }
     </style>
 </head>
 <body>
@@ -82,7 +79,7 @@
     <div class="controls">
         <button id="playBtn">▶ Play</button>
         <button id="pauseBtn">⏸ Pause</button>
-        <button id="syncBtn">🔄 Force Sync</button>
+        <button id="syncBtn">🔄 Sync Now</button>
         <span class="status" id="syncStatus">🟢 Synced</span>
         <span class="latency-badge" id="latencyInfo"></span>
     </div>
@@ -95,139 +92,143 @@
     </div>
 
     <script>
+        const socket = io();
         const video = document.getElementById('videoPlayer');
         const fileId = {{ file_id }};
-        
-        // State variables
+
         let syncing = false;
         let isCorrecting = false;
-        let lastSentAction = null;
-        let lastSentPosition = null;
-        let lastSentTime = 0;
-        let lastServerState = null;
+        let lastSeq = -1;
+        let correctionTimeout = null;
+        let seekDebounce = null;
         let clientLatency = 50;
-        let heartbeatInterval = null;
-        let seekTimeout = null;
-        
-        // Configuration
-        const POLL_INTERVAL = 3000;
-        const SEEK_THRESHOLD = 2.0;
-        const DRIFT_CORRECTION = 1.5;
-        
-        // Helper: fetch current watch state
-        async function fetchWatchState() {
-            const startTime = Date.now();
-            try {
-                const resp = await fetch(`/watch/state/${fileId}`);
-                if (!resp.ok) throw new Error('State fetch failed');
-                
-                const rtt = Date.now() - startTime;
-                clientLatency = clientLatency * 0.7 + (rtt / 2) * 0.3;
-                document.getElementById('latencyInfo').innerHTML = `📡 ${Math.round(clientLatency)}ms`;
-                
-                const state = await resp.json();
-                lastServerState = state;
-                applyServerState(state);
-            } catch (err) {
-                console.warn('Poll error:', err);
-                document.getElementById('syncStatus').innerHTML = '⚠️ Connection issue';
+        let lastServerState = null;
+
+        const SOFT_DRIFT = 0.35;
+        const HARD_DRIFT = 0.90;
+
+        // Join watch room
+        socket.emit('join_watch', {
+            file_id: fileId
+        });
+
+        function getTargetPosition(state) {
+            const now = state.server_now;
+
+            if (state.playing) {
+                return state.position + (Date.now() / 1000 - now);
             }
-        }
-        
-        // Calculate effective position with interpolation
-        function getEffectivePosition(state, nowSec = null) {
-            if (!nowSec) nowSec = Date.now() / 1000;
-            if (state.playing && state.updated_at) {
-                const elapsed = Math.max(0, nowSec - state.updated_at);
-                return state.position + elapsed;
-            }
+
             return state.position;
         }
-        
-        // Apply server state to local video
-        function applyServerState(state) {
-            if (syncing || isCorrecting) return;
-            
-            const nowSec = Date.now() / 1000;
-            let targetPosition = getEffectivePosition(state, nowSec);
-            const currentPosition = video.currentTime;
-            const difference = targetPosition - currentPosition;
-            
-            let shouldSeek = false;
-            let seekReason = '';
-            
-            if (Math.abs(difference) > SEEK_THRESHOLD) {
-                shouldSeek = true;
-                seekReason = `big drift ${difference.toFixed(2)}s`;
-            } else if (state.playing && Math.abs(difference) > DRIFT_CORRECTION) {
-                shouldSeek = true;
-                seekReason = `drift ${difference.toFixed(2)}s`;
-            } else if (!state.playing && Math.abs(difference) > 0.5) {
-                shouldSeek = true;
-                seekReason = `paused drift ${difference.toFixed(2)}s`;
+
+        function resetPlaybackRate() {
+            video.playbackRate = 1.0;
+        }
+
+        function applyState(state) {
+            if (state.seq <= lastSeq) {
+                return;
             }
-            
-            if (shouldSeek && targetPosition >= 0) {
+
+            lastSeq = state.seq;
+            lastServerState = state;
+
+            if (syncing || isCorrecting) {
+                return;
+            }
+
+            const target = getTargetPosition(state);
+            const current = video.currentTime;
+            const diff = target - current;
+
+            // Hard seek for major desync
+            if (Math.abs(diff) > HARD_DRIFT) {
                 isCorrecting = true;
-                video.currentTime = targetPosition;
-                document.getElementById('syncStatus').innerHTML = `🎬 Syncing (${seekReason})`;
-                setTimeout(() => {
+                video.currentTime = Math.max(0, target);
+
+                clearTimeout(correctionTimeout);
+                correctionTimeout = setTimeout(() => {
                     isCorrecting = false;
+                }, 300);
+
+                document.getElementById('syncStatus').innerHTML = '🎬 Hard sync';
+                setTimeout(() => {
                     if (!syncing) document.getElementById('syncStatus').innerHTML = '🟢 Synced';
                 }, 500);
+
+            } 
+            // Soft drift correction using playbackRate
+            else if (Math.abs(diff) > SOFT_DRIFT && state.playing) {
+                if (diff > 0) {
+                    video.playbackRate = 1.05;
+                } else {
+                    video.playbackRate = 0.95;
+                }
+
+                clearTimeout(correctionTimeout);
+                correctionTimeout = setTimeout(() => {
+                    resetPlaybackRate();
+                }, 1200);
+
+                document.getElementById('syncStatus').innerHTML = `🎯 Drift ${diff.toFixed(2)}s`;
+            } 
+            else {
+                resetPlaybackRate();
+                if (!isCorrecting) {
+                    document.getElementById('syncStatus').innerHTML = '🟢 Synced';
+                }
             }
-            
-            // Sync play/pause (but don't trigger play/pause events that cause feedback)
+
+            // Sync play/pause state
             if (state.playing && video.paused) {
                 video.play().catch(e => console.log('autoplay blocked:', e));
-                if (!shouldSeek) document.getElementById('syncStatus').innerHTML = '▶️ Playing';
-            } else if (!state.playing && !video.paused) {
+            }
+
+            if (!state.playing && !video.paused) {
                 video.pause();
-                if (!shouldSeek) document.getElementById('syncStatus').innerHTML = '⏸ Paused';
             }
         }
-        
-        // Send action to server (single definition)
-        async function sendAction(action, position = null) {
-            if (syncing || isCorrecting) return;
-            
-            const now = Date.now();
-            if (now - lastSentTime < 200 && action === 'seek') return;
-            if (lastSentAction === action && 
-                (action !== 'seek' || Math.abs(lastSentPosition - position) < 0.3)) return;
-            
+
+        socket.on('watch_update', applyState);
+
+        async function sendAction(action) {
+            if (syncing || isCorrecting) {
+                return;
+            }
+
             syncing = true;
-            lastSentAction = action;
-            lastSentPosition = position;
-            lastSentTime = now;
-            
-            const payload = { action, latency: Math.round(clientLatency) };
-            if (position !== null) payload.position = position;
-            
+
             try {
                 await fetch(`/watch/action/${fileId}`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        action: action,
+                        position: video.currentTime,
+                        latency: Math.round(clientLatency)
+                    })
                 });
-            } catch (err) {
-                console.warn('Action error:', err);
+            } catch (e) {
+                console.warn('Action error:', e);
             }
-            
+
             syncing = false;
         }
-        
-        // Fetch active viewers
+
+        // Fetch viewers periodically (still needed for viewer list)
         async function fetchViewers() {
             try {
                 const resp = await fetch(`/watch/viewers/${fileId}`);
                 if (!resp.ok) throw new Error('Viewer fetch failed');
                 const data = await resp.json();
-                
+
                 document.getElementById('viewerCount').innerHTML = data.count;
                 const viewerList = document.getElementById('viewerList');
                 const viewerPanel = document.getElementById('viewerPanel');
-                
+
                 if (data.count > 0) {
                     viewerPanel.style.display = 'block';
                     viewerList.innerHTML = data.viewers.map(v => {
@@ -244,103 +245,69 @@
                 console.warn('Viewer fetch error:', err);
             }
         }
-        
-        // Debounced seek handler
-        function handleSeek() {
-            if (seekTimeout) clearTimeout(seekTimeout);
-            seekTimeout = setTimeout(() => {
-                if (!syncing && !isCorrecting) {
-                    sendAction('seek', video.currentTime);
-                }
-            }, 100);
-        }
-        
-        // Heartbeat while playing
-        function startHeartbeat() {
-            if (heartbeatInterval) clearInterval(heartbeatInterval);
-            heartbeatInterval = setInterval(() => {
-                if (!video.paused && !syncing && !isCorrecting) {
-                    sendAction('seek', video.currentTime);
-                }
-            }, 10000);
-        }
-        
-        function stopHeartbeat() {
-            if (heartbeatInterval) {
-                clearInterval(heartbeatInterval);
-                heartbeatInterval = null;
+
+        // Measure latency via fetch (fallback when WebSocket not used)
+        async function measureLatency() {
+            const start = Date.now();
+            try {
+                await fetch(`/watch/viewers/${fileId}`);
+                const rtt = Date.now() - start;
+                clientLatency = clientLatency * 0.7 + (rtt / 2) * 0.3;
+                document.getElementById('latencyInfo').innerHTML = `📡 ${Math.round(clientLatency)}ms`;
+            } catch (e) {
+                // Keep existing latency
             }
         }
-        
-        // Event listeners
-        video.addEventListener('play', () => {
-            if (!syncing && !isCorrecting) {
-                sendAction('play', video.currentTime);
-            }
-            startHeartbeat();
-        });
-        
-        video.addEventListener('pause', () => {
-            if (!syncing && !isCorrecting) {
-                sendAction('pause', video.currentTime);
-            }
-            stopHeartbeat();
-        });
-        
-        video.addEventListener('seeked', handleSeek);
-        
-        // Manual buttons
-        document.getElementById('playBtn').addEventListener('click', () => {
-            if (!syncing && !isCorrecting) video.play();
-        });
-        
-        document.getElementById('pauseBtn').addEventListener('click', () => {
-            if (!syncing && !isCorrecting) video.pause();
-        });
 
         // Force sync button
         document.getElementById('syncBtn').addEventListener('click', async () => {
             if (syncing || isCorrecting) return;
 
-            try {
-                const resp = await fetch(`/watch/sync/${fileId}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' }
-                });
-
-                if (!resp.ok) throw new Error('Sync failed');
-
-                const data = await resp.json();
-
-                // Immediately apply the synced position
-                isCorrecting = true;
-                video.currentTime = data.position;
-
-                if (data.playing && video.paused) {
-                    video.play();
-                } else if (!data.playing && !video.paused) {
-                    video.pause();
-                }
-
-                document.getElementById('syncStatus').innerHTML = '🔄 Force synced!';
-                setTimeout(() => {
-                    isCorrecting = false;
-                    document.getElementById('syncStatus').innerHTML = '🟢 Synced';
-                }, 1000);
-
-            } catch (err) {
-                console.warn('Force sync error:', err);
-                document.getElementById('syncStatus').innerHTML = '⚠️ Sync failed';
-                setTimeout(() => {
-                    if (!syncing) document.getElementById('syncStatus').innerHTML = '🟢 Synced';
-                }, 2000);
-            }
+            // Force a hard sync by sending a seek to current position
+            await sendAction('seek', video.currentTime);
+            
+            document.getElementById('syncStatus').innerHTML = '🔄 Force sync sent';
+            setTimeout(() => {
+                if (!syncing) document.getElementById('syncStatus').innerHTML = '🟢 Synced';
+            }, 1000);
         });
-        
-        // Start polling
-        setInterval(fetchWatchState, POLL_INTERVAL);
+
+        // Video event listeners
+        video.addEventListener('play', () => {
+            sendAction('play');
+        });
+
+        video.addEventListener('pause', () => {
+            sendAction('pause');
+        });
+
+        video.addEventListener('seeked', () => {
+            if (seekDebounce) {
+                clearTimeout(seekDebounce);
+            }
+
+            seekDebounce = setTimeout(() => {
+                sendAction('seek');
+            }, 120);
+        });
+
+        // Manual buttons
+        document.getElementById('playBtn').addEventListener('click', () => {
+            if (!syncing && !isCorrecting) video.play();
+        });
+
+        document.getElementById('pauseBtn').addEventListener('click', () => {
+            if (!syncing && !isCorrecting) video.pause();
+        });
+
+        // Periodic tasks
         setInterval(fetchViewers, 3000);
-        setTimeout(fetchWatchState, 500);
+        setInterval(measureLatency, 5000);
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            resetPlaybackRate();
+        });
     </script>
 </body>
 </html>
