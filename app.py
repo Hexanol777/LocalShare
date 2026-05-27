@@ -14,9 +14,6 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-import warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning, module="eventlet")
-
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
@@ -467,4 +464,19 @@ scheduler.start()
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
+    
+    # Retireving machine ip on network
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(('8.8.8.8', 80))
+        local_ip = s.getsockname()[0]
+    except Exception:
+        local_ip = '127.0.0.1'
+    finally:
+        s.close()
+
+    print(f"Running on:\n  http://{local_ip}:5000 \n  http://127.0.0.1:5000 \n  http://localhost:5000")
+    print(f"Press CTRL+C to quit")
+
     socketio.run(app, host='0.0.0.0', port=5000)
