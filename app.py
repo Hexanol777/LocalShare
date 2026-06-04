@@ -1,5 +1,7 @@
+import eventlet
+eventlet.monkey_patch()
+
 import os
-import uuid
 import threading
 import time
 import re
@@ -19,7 +21,8 @@ app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///database.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['MAX_CONTENT_LENGTH'] = 2000 * 1024 * 1024  # 2GB limit
+app.config['MAX_CONTENT_LENGTH'] = 10000 * 1024 * 1024  # 10GB limit
+
 
 # Initialize SocketIO
 socketio = SocketIO(
@@ -68,7 +71,7 @@ class ChatMessage(db.Model):
 # Routes
 @app.route('/')
 def index():
-    recent_files = File.query.filter(File.upload_time >= datetime.utcnow() - timedelta(hours=24)).order_by(File.upload_time.desc()).all()
+    recent_files = File.query.filter(File.upload_time >= datetime.utcnow() - timedelta(hours=72)).order_by(File.upload_time.desc()).all()
     for file in recent_files:
         file.display_size = human_readable_size(file.file_size)
         file.extension = os.path.splitext(file.original_name)[1].lower()
@@ -174,7 +177,7 @@ def stream_file(file_id):
             f.seek(start)
             remaining = length
             while remaining > 0:
-                chunk_size = min(8192, remaining)
+                chunk_size = min(1024 * 256, remaining)
                 chunk = f.read(chunk_size)
                 if not chunk:
                     break
@@ -301,6 +304,13 @@ def watch_action(file_id):
             sess['position'] = float(data.get('position', sess['position']))
             sess['updated_at'] = now
             sess['last_action'] = 'pause'
+
+        elif action == 'heartbeat':
+            # Heartbeat does NOT change playing state. It only refreshes
+            # the authoritative position and timestamp to prevent drift.
+            if 'position' in data:
+                sess['position'] = float(data['position'])
+            sess['updated_at'] = now
 
         else:
             return {'error': 'unknown action'}, 400

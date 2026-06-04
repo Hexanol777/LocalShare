@@ -11,70 +11,22 @@
             background: #111;
             color: #eee;
         }
-        video {
-            width: 100%;
-            max-height: 80vh;
-            background: black;
-        }
-        .controls {
-            margin-top: 15px;
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
-            align-items: center;
-        }
-        button {
-            padding: 8px 16px;
-            font-size: 1rem;
-            cursor: pointer;
-        }
-        .status {
-            font-family: monospace;
-            font-size: 0.9rem;
-            margin-left: auto;
-        }
-        .latency-badge {
-            font-family: monospace;
-            font-size: 0.8rem;
-            color: #aaa;
-            margin-left: 10px;
-        }
-        .viewer-panel {
-            margin-top: 20px;
-            padding: 12px;
-            background: #1a1a2e;
-            border-radius: 8px;
-            font-size: 0.85rem;
-        }
-        .viewer-panel h4 {
-            margin: 0 0 8px 0;
-            font-size: 0.9rem;
-            color: #aaa;
-        }
-        .viewer-list {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-        }
-        .viewer-tag {
-            background: #2d2d44;
-            padding: 4px 10px;
-            border-radius: 20px;
-            font-family: monospace;
-            font-size: 0.75rem;
-        }
-        .viewer-tag .ip {
-            color: #8bc34a;
-        }
-        .viewer-tag .ping {
-            color: #ffb74d;
-        }
+        video { width: 100%; max-height: 80vh; background: black; }
+        .controls { margin-top: 15px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+        button { padding: 8px 16px; font-size: 1rem; cursor: pointer; }
+        .status { font-family: monospace; font-size: 0.9rem; margin-left: auto; }
+        .latency-badge { font-family: monospace; font-size: 0.8rem; color: #aaa; margin-left: 10px; }
+        .viewer-panel { margin-top: 20px; padding: 12px; background: #1a1a2e; border-radius: 8px; font-size: 0.85rem; }
+        .viewer-panel h4 { margin: 0 0 8px 0; font-size: 0.9rem; color: #aaa; }
+        .viewer-list { display: flex; flex-wrap: wrap; gap: 8px; }
+        .viewer-tag { background: #2d2d44; padding: 4px 10px; border-radius: 20px; font-family: monospace; font-size: 0.75rem; }
+        .viewer-tag .ip { color: #8bc34a; }
+        .viewer-tag .ping { color: #ffb74d; }
     </style>
 </head>
 <body>
     <video id="videoPlayer" controls width="100%">
         <source src="{{ url_for('stream_file', file_id=file_id) }}" type="{{ mimetype }}">
-        Your browser does not support the video tag.
     </video>
     <div class="controls">
         <button id="playBtn">▶ Play</button>
@@ -83,230 +35,258 @@
         <span class="status" id="syncStatus">🟢 Synced</span>
         <span class="latency-badge" id="latencyInfo"></span>
     </div>
-
     <div class="viewer-panel" id="viewerPanel" style="display: none;">
         <h4>👥 Viewers (<span id="viewerCount">0</span>)</h4>
-        <div id="viewerList" class="viewer-list">
-            <span style="color:#666;">Loading...</span>
-        </div>
+        <div id="viewerList" class="viewer-list"><span style="color:#666;">Loading...</span></div>
     </div>
 
     <script>
-        const socket = io();
+        // --- DOM Elements ---
         const video = document.getElementById('videoPlayer');
         const fileId = {{ file_id }};
+        const socket = io();
 
-        let syncing = false;
-        let isCorrecting = false;
+        // --- Sync State Variables --- 
+        let syncing = false;          // User action in progress
+        let isCorrecting = false;     // Server-driven correction in progress
+        let suppressEvents = false;   // Dedicated flag to prevent feedback loops
         let lastSeq = -1;
         let correctionTimeout = null;
         let seekDebounce = null;
-        let clientLatency = 50;
-        let lastServerState = null;
-
+        let heartbeatInterval = null;
+        let serverTimeOffset = 0;      // Estimated offset between client and server clocks
+        
+        // Configuration Constants
         const SOFT_DRIFT = 0.35;
-        const HARD_DRIFT = 0.90;
+        const HARD_DRIFT_PLAYING = 1.2;   // Less aggressive while playing
+        const HARD_DRIFT_PAUSED = 0.15;   // Very strict when paused
+        const HEARTBEAT_INTERVAL_MS = 4000;
 
-        // Join watch room
-        socket.emit('join_watch', {
-            file_id: fileId
-        });
-
+        // --- Core Synchronization Logic ---
+        
+        // Calculate target position with clock drift compensation
         function getTargetPosition(state) {
-            const now = state.server_now;
+            const localNow = Date.now() / 1000;
+            const syncedServerNow = state.server_now + serverTimeOffset;
+            const elapsed = syncedServerNow - state.updated_at;
 
             if (state.playing) {
-                return state.position + (Date.now() / 1000 - now);
+                // Interpolate forward based on our best estimate of server time
+                return state.position + elapsed;
             }
-
             return state.position;
         }
 
-        function resetPlaybackRate() {
-            video.playbackRate = 1.0;
+        // Adaptive playback rate correction
+        function applyPlaybackRateCorrection(diff) {
+            if (Math.abs(diff) <= SOFT_DRIFT) {
+                if (video.playbackRate !== 1.0) video.playbackRate = 1.0;
+                return;
+            }
+            
+            // Gentle, adaptive correction
+            const maxRateChange = 0.04;
+            let correction = Math.min(Math.abs(diff) * 0.08, maxRateChange);
+            let newRate = diff > 0 ? 1.0 + correction : 1.0 - correction;
+            
+            // Clamp to safe range
+            newRate = Math.min(Math.max(newRate, 0.92), 1.08);
+            
+            if (Math.abs(video.playbackRate - newRate) > 0.005) {
+                video.playbackRate = newRate;
+            }
         }
 
+        // Apply server state to local video
         function applyState(state) {
-            if (state.seq <= lastSeq) {
-                return;
-            }
-
+            // Prevent processing old or out-of-order updates
+            if (state.seq <= lastSeq) return;
             lastSeq = state.seq;
-            lastServerState = state;
 
-            if (syncing || isCorrecting) {
-                return;
-            }
+            if (syncing || isCorrecting) return;
 
             const target = getTargetPosition(state);
             const current = video.currentTime;
-            const diff = target - current;
+            let diff = target - current;
+            
+            // Clamp diff to avoid extreme corrections on seek
+            diff = Math.min(Math.max(diff, -5), 5);
 
-            // Hard seek for major desync
-            if (Math.abs(diff) > HARD_DRIFT) {
+            // Determine correction strategy
+            const isPaused = !state.playing;
+            const hardDriftThreshold = isPaused ? HARD_DRIFT_PAUSED : HARD_DRIFT_PLAYING;
+            
+            let needsHardSeek = Math.abs(diff) > hardDriftThreshold;
+            
+            // Special case: never hard-seek if we're already very close while playing
+            if (!isPaused && Math.abs(diff) < 0.5) needsHardSeek = false;
+
+            if (needsHardSeek) {
+                // HARD CORRECTION: Direct seek
+                suppressEvents = true;
                 isCorrecting = true;
+                
                 video.currentTime = Math.max(0, target);
-
-                clearTimeout(correctionTimeout);
-                correctionTimeout = setTimeout(() => {
-                    isCorrecting = false;
-                }, 300);
-
-                document.getElementById('syncStatus').innerHTML = '🎬 Hard sync';
+                document.getElementById('syncStatus').innerHTML = `🎬 Hard sync (${diff.toFixed(2)}s)`;
+                
                 setTimeout(() => {
-                    if (!syncing) document.getElementById('syncStatus').innerHTML = '🟢 Synced';
-                }, 500);
-
-            } 
-            // Soft drift correction using playbackRate
-            else if (Math.abs(diff) > SOFT_DRIFT && state.playing) {
-                if (diff > 0) {
-                    video.playbackRate = 1.05;
-                } else {
-                    video.playbackRate = 0.95;
-                }
-
-                clearTimeout(correctionTimeout);
-                correctionTimeout = setTimeout(() => {
-                    resetPlaybackRate();
-                }, 1200);
-
-                document.getElementById('syncStatus').innerHTML = `🎯 Drift ${diff.toFixed(2)}s`;
+                    isCorrecting = false;
+                    suppressEvents = false;
+                    document.getElementById('syncStatus').innerHTML = '🟢 Synced';
+                }, 300);
             } 
             else {
-                resetPlaybackRate();
-                if (!isCorrecting) {
+                // SOFT CORRECTION: Playback rate adjustment
+                applyPlaybackRateCorrection(diff);
+                
+                if (Math.abs(diff) > 0.1) {
+                    document.getElementById('syncStatus').innerHTML = `🎯 Drift ${diff.toFixed(2)}s`;
+                } else if (document.getElementById('syncStatus').innerHTML.includes('Drift')) {
                     document.getElementById('syncStatus').innerHTML = '🟢 Synced';
                 }
             }
 
-            // Sync play/pause state
-            if (state.playing && video.paused) {
+            // Sync play/pause state (respecting suppression flag)
+            if (state.playing && video.paused && !suppressEvents) {
                 video.play().catch(e => console.log('autoplay blocked:', e));
-            }
-
-            if (!state.playing && !video.paused) {
+            } else if (!state.playing && !video.paused && !suppressEvents) {
                 video.pause();
             }
         }
 
-        socket.on('watch_update', applyState);
+        // --- Clock Synchronization ---
+        socket.on('watch_update', (state) => {
+            // Continuously refine the server time offset using an exponential moving average
+            const localNow = Date.now() / 1000;
+            const rawOffset = state.server_now - localNow;
+            serverTimeOffset = serverTimeOffset * 0.9 + rawOffset * 0.1;
+            
+            // Update latency display (RTT estimation)
+            const latencyMs = Math.round(Math.abs(rawOffset) * 1000 * 2);
+            document.getElementById('latencyInfo').innerHTML = `📡 ${latencyMs}ms`;
+            
+            applyState(state);
+        });
 
-        async function sendAction(action) {
-            if (syncing || isCorrecting) {
-                return;
-            }
-
+        // --- Network Actions (with suppression) ---
+        async function sendAction(action, position = null) {
+            if (syncing || isCorrecting) return;
+            
             syncing = true;
-
+            
+            const payload = { action };
+            if (position !== null) payload.position = position;
+            
+            // Include current client-side time for better server-side sync
+            payload.client_time = Date.now() / 1000;
+            
             try {
                 await fetch(`/watch/action/${fileId}`, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        action: action,
-                        position: video.currentTime,
-                        latency: Math.round(clientLatency)
-                    })
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
                 });
-            } catch (e) {
-                console.warn('Action error:', e);
+            } catch (err) {
+                console.warn('Action error:', err);
             }
-
+            
             syncing = false;
         }
 
-        // Fetch viewers periodically (still needed for viewer list)
-        async function fetchViewers() {
-            try {
-                const resp = await fetch(`/watch/viewers/${fileId}`);
-                if (!resp.ok) throw new Error('Viewer fetch failed');
-                const data = await resp.json();
-
-                document.getElementById('viewerCount').innerHTML = data.count;
-                const viewerList = document.getElementById('viewerList');
-                const viewerPanel = document.getElementById('viewerPanel');
-
-                if (data.count > 0) {
-                    viewerPanel.style.display = 'block';
-                    viewerList.innerHTML = data.viewers.map(v => {
-                        const shortIp = v.ip.replace('::ffff:', '').replace('::1', 'localhost');
-                        return `<div class="viewer-tag">
-                                    <span class="ip">${shortIp}</span>
-                                    <span class="ping">📡 ${v.latency}ms</span>
-                                </div>`;
-                    }).join('');
-                } else {
-                    viewerPanel.style.display = 'none';
-                }
-            } catch (err) {
-                console.warn('Viewer fetch error:', err);
+        // --- Regular Heartbeat (Prevents Silent Drift) ---
+        function startHeartbeat() {
+            if (heartbeatInterval) clearInterval(heartbeatInterval);
+            heartbeatInterval = setInterval(() => {
+                // Don't send heartbeat if we're currently syncing or correcting
+                if (video.paused) return;
+                if (syncing || isCorrecting) return;
+                
+                // Send current position to server to refresh authoritative state
+                sendAction('heartbeat', video.currentTime);
+            }, HEARTBEAT_INTERVAL_MS);
+        }
+        
+        function stopHeartbeat() {
+            if (heartbeatInterval) {
+                clearInterval(heartbeatInterval);
+                heartbeatInterval = null;
             }
         }
 
-        // Measure latency via fetch (fallback when WebSocket not used)
-        async function measureLatency() {
-            const start = Date.now();
-            try {
-                await fetch(`/watch/viewers/${fileId}`);
-                const rtt = Date.now() - start;
-                clientLatency = clientLatency * 0.7 + (rtt / 2) * 0.3;
-                document.getElementById('latencyInfo').innerHTML = `📡 ${Math.round(clientLatency)}ms`;
-            } catch (e) {
-                // Keep existing latency
-            }
+        // --- Event Listeners (with suppression) ---
+        function handlePlay() {
+            if (suppressEvents) return;
+            sendAction('play', video.currentTime);
+            startHeartbeat();
+        }
+        
+        function handlePause() {
+            if (suppressEvents) return;
+            sendAction('pause', video.currentTime);
+            stopHeartbeat();
+        }
+        
+        function handleSeek() {
+            if (seekDebounce) clearTimeout(seekDebounce);
+            if (suppressEvents) return;
+            
+            seekDebounce = setTimeout(() => {
+                sendAction('seek', video.currentTime);
+            }, 120);
         }
 
-        // Force sync button
+        video.addEventListener('play', handlePlay);
+        video.addEventListener('pause', handlePause);
+        video.addEventListener('seeked', handleSeek);
+        
+        // --- Manual Controls ---
+        document.getElementById('playBtn').addEventListener('click', () => {
+            if (!syncing && !isCorrecting) video.play();
+        });
+        document.getElementById('pauseBtn').addEventListener('click', () => {
+            if (!syncing && !isCorrecting) video.pause();
+        });
         document.getElementById('syncBtn').addEventListener('click', async () => {
             if (syncing || isCorrecting) return;
-
-            // Force a hard sync by sending a seek to current position
-            await sendAction('seek', video.currentTime);
-            
+            // Force a hard sync by requesting the current server state
+            // and then seeking to it.
+            sendAction('seek', video.currentTime);
             document.getElementById('syncStatus').innerHTML = '🔄 Force sync sent';
             setTimeout(() => {
                 if (!syncing) document.getElementById('syncStatus').innerHTML = '🟢 Synced';
             }, 1000);
         });
 
-        // Video event listeners
-        video.addEventListener('play', () => {
-            sendAction('play');
-        });
-
-        video.addEventListener('pause', () => {
-            sendAction('pause');
-        });
-
-        video.addEventListener('seeked', () => {
-            if (seekDebounce) {
-                clearTimeout(seekDebounce);
-            }
-
-            seekDebounce = setTimeout(() => {
-                sendAction('seek');
-            }, 120);
-        });
-
-        // Manual buttons
-        document.getElementById('playBtn').addEventListener('click', () => {
-            if (!syncing && !isCorrecting) video.play();
-        });
-
-        document.getElementById('pauseBtn').addEventListener('click', () => {
-            if (!syncing && !isCorrecting) video.pause();
-        });
-
-        // Periodic tasks
+        // --- Periodic Viewer List Refresh (Polling, can be kept as-is) ---
+        async function fetchViewers() {
+            try {
+                const resp = await fetch(`/watch/viewers/${fileId}`);
+                if (!resp.ok) throw new Error();
+                const data = await resp.json();
+                document.getElementById('viewerCount').innerHTML = data.count;
+                const viewerList = document.getElementById('viewerList');
+                const viewerPanel = document.getElementById('viewerPanel');
+                if (data.count > 0) {
+                    viewerPanel.style.display = 'block';
+                    viewerList.innerHTML = data.viewers.map(v => {
+                        const shortIp = v.ip.replace('::ffff:', '').replace('::1', 'localhost');
+                        return `<div class="viewer-tag"><span class="ip">${shortIp}</span><span class="ping">📡 ${v.latency}ms</span></div>`;
+                    }).join('');
+                } else {
+                    viewerPanel.style.display = 'none';
+                }
+            } catch (err) { console.warn('Viewer fetch error:', err); }
+        }
         setInterval(fetchViewers, 3000);
-        setInterval(measureLatency, 5000);
+        fetchViewers();
 
-        // Cleanup on page unload
+        // --- Initialization ---
+        socket.emit('join_watch', { file_id: fileId });
+        
+        // Reset playback rate on page unload
         window.addEventListener('beforeunload', () => {
-            resetPlaybackRate();
+            if (heartbeatInterval) clearInterval(heartbeatInterval);
+            video.playbackRate = 1.0;
         });
     </script>
 </body>
