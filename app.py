@@ -17,13 +17,11 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///database.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['MAX_CONTENT_LENGTH'] = 10000 * 1024 * 1024  # 10GB limit
-
 
 # Initialize SocketIO
 socketio = SocketIO(
@@ -38,14 +36,12 @@ watch_sequence = defaultdict(int)
 watch_lock = threading.Lock()
 client_last_update = defaultdict(float)
 client_update_lock = threading.Lock()
-RATE_LIMIT_SECONDS = 0.3  # Slightly optimized rate limit window
+RATE_LIMIT_SECONDS = 0.3  
 viewers_data = defaultdict(dict)
 viewers_lock = threading.Lock()
 
-# List of streamable file extensions
 STREAMABLE_EXTENSIONS = ['.mp4', '.mkv', '.mp3', '.flac', '.webm', '.ogg']
 
-# Ensure folders exist
 if not os.path.exists('instance'):
     os.makedirs('instance')
 if not os.path.exists(app.config['UPLOAD_FOLDER']):
@@ -53,7 +49,6 @@ if not os.path.exists(app.config['UPLOAD_FOLDER']):
 
 db = SQLAlchemy(app)
 
-# Database model
 class File(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     original_name = db.Column(db.String(255), nullable=False)
@@ -61,15 +56,12 @@ class File(db.Model):
     upload_time = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     file_size = db.Column(db.Integer, nullable=False)
 
-# Chat Database model
 class ChatMessage(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     sender_ip = db.Column(db.String(45), nullable=False)
     content = db.Column(db.Text, nullable=False)
     timestamp = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
-
-# Routes
 @app.route('/')
 def index():
     recent_files = File.query.filter(File.upload_time >= datetime.utcnow() - timedelta(hours=72)).order_by(File.upload_time.desc()).all()
@@ -78,7 +70,6 @@ def index():
         file.extension = os.path.splitext(file.original_name)[1].lower()
     return render_template('index.html', files=recent_files, streamable_extensions=STREAMABLE_EXTENSIONS)
 
-
 @app.route('/upload', methods=['POST'])
 def upload_file():
     files = request.files.getlist('file')
@@ -86,7 +77,6 @@ def upload_file():
         return redirect(url_for('index'))
 
     from werkzeug.utils import secure_filename
-
     upload_id = uuid.uuid4().hex
 
     for file in files:
@@ -116,12 +106,10 @@ def upload_file():
     db.session.commit()
     return redirect(url_for('index'))
 
-
 @app.route('/download/<int:file_id>')
 def download_file(file_id):
     file = File.query.get_or_404(file_id)
     return send_from_directory(app.config['UPLOAD_FOLDER'], file.stored_name, as_attachment=True, download_name=file.original_name)
-
 
 @app.route('/stream/<int:file_id>')
 def stream_file(file_id):
@@ -132,7 +120,6 @@ def stream_file(file_id):
         return "File not found", 404
 
     file_size = os.path.getsize(file_path)
-    
     ext = os.path.splitext(file.original_name)[1].lower()
     mime_types = {
         '.mp4': 'video/mp4',
@@ -146,7 +133,6 @@ def stream_file(file_id):
 
     from urllib.parse import quote
     encoded_filename = quote(file.original_name)
-
     range_header = request.headers.get('Range', None)
     
     if not range_header:
@@ -154,7 +140,6 @@ def stream_file(file_id):
             with open(file_path, 'rb') as f:
                 while chunk := f.read(8192):
                     yield chunk
-        
         response = Response(generate(), mimetype=mimetype)
         response.headers['Content-Length'] = file_size
         response.headers['Accept-Ranges'] = 'bytes'
@@ -192,7 +177,6 @@ def stream_file(file_id):
     response.headers['Content-Disposition'] = f'inline; filename="{encoded_filename}"'
     return response
 
-
 @app.route('/stream_page/<int:file_id>')
 def stream_page(file_id):
     file = File.query.get_or_404(file_id)
@@ -208,12 +192,9 @@ def stream_page(file_id):
     mimetype = mime_types.get(ext, 'application/octet-stream')
     return render_template('stream.html', file_id=file_id, mimetype=mimetype)
 
-
-# Chat endpoints
 @app.route('/chat')
 def chat():
     return render_template('chat.html')
-
 
 @app.route('/chat/send', methods=['POST'])
 def chat_send():
@@ -229,9 +210,7 @@ def chat_send():
     chat_msg = ChatMessage(sender_ip=sender_ip, content=msg)
     db.session.add(chat_msg)
     db.session.commit()
-
     return {'status': 'ok'}
-
 
 @app.route('/chat/messages')
 def chat_messages():
@@ -249,10 +228,8 @@ def chat_messages():
         ]
     }
 
-
 @app.route('/watch/viewers/<int:file_id>')
 def watch_viewers(file_id):
-    """Get list of active viewers for a watch session, mapped from persistent socket states"""
     with viewers_lock:
         viewers = viewers_data.get(file_id, {})
         now = time.time()
@@ -272,8 +249,6 @@ def watch_viewers(file_id):
             ]
         }
 
-
-# WebSocket handlers
 @socketio.on('join_watch')
 def join_watch(data):
     file_id = data.get('file_id')
@@ -281,8 +256,6 @@ def join_watch(data):
         return
 
     join_room(f'watch_{file_id}')
-    
-    # Initialize session tracking immediately upon connection
     client_sid = request.sid
     client_ip = request.remote_addr or 'unknown'
     update_viewer_info(file_id, client_sid, client_ip, 25.0)
@@ -308,10 +281,8 @@ def join_watch(data):
         'server_now': time.time()
     })
 
-
 @socketio.on('watch_action')
 def handle_watch_action(data):
-    """Central WebSocket processing engine for real-time video actions"""
     file_id = data.get('file_id')
     action = data.get('action')
 
@@ -323,16 +294,13 @@ def handle_watch_action(data):
     client_ip = request.remote_addr or 'unknown'
     rate_limit_key = f"{client_sid}:{file_id}"
     
-    # Extract client-side context to derive dynamic network latency
     client_time = data.get('client_time')
     client_latency = 40.0
     if client_time:
         client_latency = max(0.0, (now - client_time) * 1000.0)
 
-    # Refresh structural diagnostics metrics
     update_viewer_info(file_id, client_sid, client_ip, client_latency)
     
-    # Rate limiting calculated per distinct tab session ID to allow seamless multi-testing
     with client_update_lock:
         last_update = client_last_update.get(rate_limit_key, 0)
         if now - last_update < RATE_LIMIT_SECONDS and action != 'seek':
@@ -356,19 +324,16 @@ def handle_watch_action(data):
             sess['position'] = pos
             sess['updated_at'] = now
             sess['last_action'] = 'seek'
-
         elif action == 'play':
             sess['playing'] = True
             sess['position'] = float(data.get('position', sess['position']))
             sess['updated_at'] = now
             sess['last_action'] = 'play'
-
         elif action == 'pause':
             sess['playing'] = False
             sess['position'] = float(data.get('position', sess['position']))
             sess['updated_at'] = now
             sess['last_action'] = 'pause'
-
         elif action == 'heartbeat':
             if 'position' in data:
                 sess['position'] = float(data['position'])
@@ -387,14 +352,8 @@ def handle_watch_action(data):
             'server_now': now
         }
 
-    socketio.emit(
-        'watch_update',
-        payload,
-        room=f'watch_{file_id}'
-    )
+    socketio.emit('watch_update', payload, room=f'watch_{file_id}')
 
-
-# Helper functions
 def human_readable_size(size):
     for unit in ['B', 'KB', 'MB', 'GB']:
         if size < 1024:
@@ -402,13 +361,10 @@ def human_readable_size(size):
         size /= 1024
     return f"{size:.2f} TB"
 
-
 def update_viewer_info(file_id, client_sid, client_ip, latency_ms):
-    """Tracks unique active tabs (sid) while retaining their target IP for visualization"""
     with viewers_lock:
         now = time.time()
         viewers = viewers_data[file_id]
-        
         if client_sid not in viewers:
             viewers[client_sid] = {'ip': client_ip, 'last_seen': now, 'latency': latency_ms, 'first_seen': now}
         else:
@@ -416,8 +372,6 @@ def update_viewer_info(file_id, client_sid, client_ip, latency_ms):
             viewers[client_sid]['latency'] = old_latency * 0.7 + latency_ms * 0.3
             viewers[client_sid]['last_seen'] = now
 
-
-# Cleanup functions
 def cleanup_old_files():
     with app.app_context():
         cutoff = datetime.utcnow() - timedelta(hours=24)
@@ -433,7 +387,6 @@ def cleanup_old_files():
         ChatMessage.query.filter(ChatMessage.timestamp < cutoff).delete()
         db.session.commit()
 
-
 def cleanup_watch_sessions():
     now = time.time()
     with watch_lock:
@@ -441,9 +394,6 @@ def cleanup_watch_sessions():
                            if now - sess.get('last_active', 0) > 600]
         for fid in expired_sessions:
             del watch_sessions[fid]
-        if expired_sessions:
-            logger.info(f"Cleaned up {len(expired_sessions)} inactive watch sessions")
-    
     with viewers_lock:
         for fid in list(viewers_data.keys()):
             viewers = viewers_data[fid]
@@ -454,7 +404,6 @@ def cleanup_watch_sessions():
             if not viewers and fid not in watch_sessions:
                 del viewers_data[fid]
 
-
 def cleanup_rate_limits():
     now = time.time()
     with client_update_lock:
@@ -463,19 +412,15 @@ def cleanup_rate_limits():
         for key in expired:
             del client_last_update[key]
 
-
-# Schedule cleanup
 scheduler = BackgroundScheduler()
-scheduler.add_job(cleanup_old_files, 'interval', hours=4)  # Lower interval frequency to reduce loop interference
+scheduler.add_job(cleanup_old_files, 'interval', hours=4) # Lower interval frequency to reduce loop interference
 scheduler.add_job(cleanup_watch_sessions, 'interval', minutes=15)
 scheduler.add_job(cleanup_rate_limits, 'interval', minutes=5)
 scheduler.start()
 
-
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
-    
     import socket
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -485,6 +430,5 @@ if __name__ == '__main__':
         local_ip = '127.0.0.1'
     finally:
         s.close()
-
     print(f"Running on:\n  http://{local_ip}:5000 \n  http://127.0.0.1:5000 \n  http://localhost:5000")
     socketio.run(app, host='0.0.0.0', port=5000)
