@@ -2,6 +2,7 @@ import eventlet
 eventlet.monkey_patch()
 
 import os
+import uuid
 import threading
 import time
 import re
@@ -37,7 +38,7 @@ watch_sequence = defaultdict(int)
 watch_lock = threading.Lock()
 client_last_update = defaultdict(float)
 client_update_lock = threading.Lock()
-RATE_LIMIT_SECONDS = 0.5
+RATE_LIMIT_SECONDS = 0.3  # Slightly optimized rate limit window
 viewers_data = defaultdict(dict)
 viewers_lock = threading.Lock()
 
@@ -249,34 +250,97 @@ def chat_messages():
     }
 
 
-# Watch Together endpoints
-@app.route('/watch/action/<int:file_id>', methods=['POST'])
-def watch_action(file_id):
-    data = request.get_json()
+@app.route('/watch/viewers/<int:file_id>')
+def watch_viewers(file_id):
+    """Get list of active viewers for a watch session, mapped from persistent socket states"""
+    with viewers_lock:
+        viewers = viewers_data.get(file_id, {})
+        now = time.time()
+        active = {
+            sid: info for sid, info in viewers.items()
+            if now - info.get('last_seen', 0) < 30
+        }
+        return {
+            'count': len(active),
+            'viewers': [
+                {
+                    'ip': info['ip'],
+                    'latency': round(info['latency'], 1),
+                    'active_seconds': round(now - info.get('first_seen', now), 1)
+                }
+                for sid, info in active.items()
+            ]
+        }
 
-    if not data or 'action' not in data:
-        return {'error': 'missing action'}, 400
 
-    action = data['action']
-    now = time.time()
+# WebSocket handlers
+@socketio.on('join_watch')
+def join_watch(data):
+    file_id = data.get('file_id')
+    if file_id is None:
+        return
+
+    join_room(f'watch_{file_id}')
     
-    # Rate limiting
+    # Initialize session tracking immediately upon connection
+    client_sid = request.sid
     client_ip = request.remote_addr or 'unknown'
-    rate_limit_key = f"{client_ip}:{file_id}"
+    update_viewer_info(file_id, client_sid, client_ip, 25.0)
+
+    with watch_lock:
+        sess = watch_sessions.get(file_id)
+        if not sess:
+            sess = {
+                'playing': False,
+                'position': 0.0,
+                'updated_at': time.time(),
+                'last_action': 'pause',
+                'seq': 0
+            }
+            watch_sessions[file_id] = sess
+
+    emit('watch_update', {
+        'playing': sess['playing'],
+        'position': sess['position'],
+        'updated_at': sess['updated_at'],
+        'last_action': sess['last_action'],
+        'seq': sess['seq'],
+        'server_now': time.time()
+    })
+
+
+@socketio.on('watch_action')
+def handle_watch_action(data):
+    """Central WebSocket processing engine for real-time video actions"""
+    file_id = data.get('file_id')
+    action = data.get('action')
+
+    if not file_id or not action:
+        return
+
+    now = time.time()
+    client_sid = request.sid
+    client_ip = request.remote_addr or 'unknown'
+    rate_limit_key = f"{client_sid}:{file_id}"
     
-    # Track viewer latency
-    client_latency = data.get('latency', 50)
-    update_viewer_info(file_id, client_ip, client_latency)
+    # Extract client-side context to derive dynamic network latency
+    client_time = data.get('client_time')
+    client_latency = 40.0
+    if client_time:
+        client_latency = max(0.0, (now - client_time) * 1000.0)
+
+    # Refresh structural diagnostics metrics
+    update_viewer_info(file_id, client_sid, client_ip, client_latency)
     
+    # Rate limiting calculated per distinct tab session ID to allow seamless multi-testing
     with client_update_lock:
         last_update = client_last_update.get(rate_limit_key, 0)
-        if now - last_update < RATE_LIMIT_SECONDS:
-            return {'status': 'rate_limited'}, 429
+        if now - last_update < RATE_LIMIT_SECONDS and action != 'seek':
+            return
         client_last_update[rate_limit_key] = now
 
     with watch_lock:
         sess = watch_sessions.get(file_id)
-
         if not sess:
             sess = {
                 'playing': False,
@@ -306,14 +370,9 @@ def watch_action(file_id):
             sess['last_action'] = 'pause'
 
         elif action == 'heartbeat':
-            # Heartbeat does NOT change playing state. It only refreshes
-            # the authoritative position and timestamp to prevent drift.
             if 'position' in data:
                 sess['position'] = float(data['position'])
             sess['updated_at'] = now
-
-        else:
-            return {'error': 'unknown action'}, 400
 
         watch_sequence[file_id] += 1
         sess['seq'] = watch_sequence[file_id]
@@ -334,64 +393,6 @@ def watch_action(file_id):
         room=f'watch_{file_id}'
     )
 
-    return {'status': 'ok'}
-
-
-@app.route('/watch/viewers/<int:file_id>')
-def watch_viewers(file_id):
-    """Get list of active viewers for a watch session"""
-    with viewers_lock:
-        viewers = viewers_data.get(file_id, {})
-        now = time.time()
-        active = {
-            ip: info for ip, info in viewers.items()
-            if now - info.get('last_seen', 0) < 30
-        }
-        return {
-            'count': len(active),
-            'viewers': [
-                {
-                    'ip': ip,
-                    'latency': round(info['latency'], 1),
-                    'active_seconds': round(now - info.get('first_seen', now), 1)
-                }
-                for ip, info in active.items()
-            ]
-        }
-
-
-# WebSocket handlers
-@socketio.on('join_watch')
-def join_watch(data):
-    file_id = data.get('file_id')
-
-    if file_id is None:
-        return
-
-    join_room(f'watch_{file_id}')
-
-    with watch_lock:
-        sess = watch_sessions.get(file_id)
-
-        if not sess:
-            sess = {
-                'playing': False,
-                'position': 0.0,
-                'updated_at': time.time(),
-                'last_action': 'pause',
-                'seq': 0
-            }
-            watch_sessions[file_id] = sess
-
-    emit('watch_update', {
-        'playing': sess['playing'],
-        'position': sess['position'],
-        'updated_at': sess['updated_at'],
-        'last_action': sess['last_action'],
-        'seq': sess['seq'],
-        'server_now': time.time()
-    })
-
 
 # Helper functions
 def human_readable_size(size):
@@ -402,18 +403,18 @@ def human_readable_size(size):
     return f"{size:.2f} TB"
 
 
-def update_viewer_info(file_id, client_ip, latency_ms):
-    """Track active viewers and their latency"""
+def update_viewer_info(file_id, client_sid, client_ip, latency_ms):
+    """Tracks unique active tabs (sid) while retaining their target IP for visualization"""
     with viewers_lock:
         now = time.time()
         viewers = viewers_data[file_id]
         
-        if client_ip not in viewers:
-            viewers[client_ip] = {'last_seen': now, 'latency': latency_ms, 'first_seen': now}
+        if client_sid not in viewers:
+            viewers[client_sid] = {'ip': client_ip, 'last_seen': now, 'latency': latency_ms, 'first_seen': now}
         else:
-            old_latency = viewers[client_ip]['latency']
-            viewers[client_ip]['latency'] = old_latency * 0.7 + latency_ms * 0.3
-            viewers[client_ip]['last_seen'] = now
+            old_latency = viewers[client_sid]['latency']
+            viewers[client_sid]['latency'] = old_latency * 0.7 + latency_ms * 0.3
+            viewers[client_sid]['last_seen'] = now
 
 
 # Cleanup functions
@@ -424,7 +425,10 @@ def cleanup_old_files():
         for file in old_files:
             file_path = os.path.join(app.config['UPLOAD_FOLDER'], file.stored_name)
             if os.path.exists(file_path):
-                os.remove(file_path)
+                try:
+                    os.remove(file_path)
+                except Exception as e:
+                    logger.error(f"Error removing file {file_path}: {e}")
             db.session.delete(file)
         ChatMessage.query.filter(ChatMessage.timestamp < cutoff).delete()
         db.session.commit()
@@ -432,7 +436,6 @@ def cleanup_old_files():
 
 def cleanup_watch_sessions():
     now = time.time()
-    
     with watch_lock:
         expired_sessions = [fid for fid, sess in watch_sessions.items()
                            if now - sess.get('last_active', 0) > 600]
@@ -444,10 +447,10 @@ def cleanup_watch_sessions():
     with viewers_lock:
         for fid in list(viewers_data.keys()):
             viewers = viewers_data[fid]
-            stale = [ip for ip, info in viewers.items() 
+            stale = [sid for sid, info in viewers.items() 
                     if now - info.get('last_seen', 0) > 30]
-            for ip in stale:
-                del viewers[ip]
+            for sid in stale:
+                del viewers[sid]
             if not viewers and fid not in watch_sessions:
                 del viewers_data[fid]
 
@@ -459,13 +462,11 @@ def cleanup_rate_limits():
                    if now - timestamp > 60]
         for key in expired:
             del client_last_update[key]
-        if expired:
-            logger.info(f"Cleaned up {len(expired)} rate limit entries")
 
 
 # Schedule cleanup
 scheduler = BackgroundScheduler()
-scheduler.add_job(cleanup_old_files, 'interval', hours=1)
+scheduler.add_job(cleanup_old_files, 'interval', hours=4)  # Lower interval frequency to reduce loop interference
 scheduler.add_job(cleanup_watch_sessions, 'interval', minutes=15)
 scheduler.add_job(cleanup_rate_limits, 'interval', minutes=5)
 scheduler.start()
@@ -475,7 +476,6 @@ if __name__ == '__main__':
     with app.app_context():
         db.create_all()
     
-    # Retireving machine ip on network
     import socket
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -487,6 +487,4 @@ if __name__ == '__main__':
         s.close()
 
     print(f"Running on:\n  http://{local_ip}:5000 \n  http://127.0.0.1:5000 \n  http://localhost:5000")
-    print(f"Press CTRL+C to quit")
-
     socketio.run(app, host='0.0.0.0', port=5000)
