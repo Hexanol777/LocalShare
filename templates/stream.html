@@ -2,202 +2,305 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Watch Together Room</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socketio/4.7.2/socketio.min.js"></script>
+    <title>Stream with Watch Together</title>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
     <style>
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            background: #121214;
-            color: #e1e1e6;
-            margin: 0;
-            padding: 20px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
+            font-family: system-ui, sans-serif;
+            margin: 20px;
+            background: #111;
+            color: #eee;
         }
-        .container {
-            width: 100%;
-            max-width: 960px;
-        }
-        header {
-            margin-bottom: 20px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        a { color: #4ea8de; text-decoration: none; }
-        .player-wrapper {
-            background: #000;
-            border-radius: 8px;
-            overflow: hidden;
-            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-            margin-bottom: 20px;
-        }
-        video, audio {
-            width: 100%;
-            display: block;
-            outline: none;
-        }
-        .dashboard {
-            background: #202024;
-            border-radius: 8px;
-            padding: 20px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-        }
-        .dashboard h3 { margin-top: 0; color: #ff79c6; }
-        .viewers-list {
-            list-style: none;
-            padding: 0;
-            margin: 0;
-        }
-        .viewers-list li {
-            padding: 8px 12px;
-            background: #29292e;
-            margin-bottom: 6px;
-            border-radius: 4px;
-            display: flex;
-            justify-content: space-between;
-            font-family: monospace;
-            font-size: 0.9rem;
-        }
-        .badge {
-            background: #4ea8de;
-            color: #121214;
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-weight: bold;
-        }
+        video { width: 100%; max-height: 80vh; background: black; }
+        .controls { margin-top: 15px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+        button { padding: 8px 16px; font-size: 1rem; cursor: pointer; }
+        .status { font-family: monospace; font-size: 0.9rem; margin-left: auto; }
+        .latency-badge { font-family: monospace; font-size: 0.8rem; color: #aaa; margin-left: 10px; }
+        .viewer-panel { margin-top: 20px; padding: 12px; background: #1a1a2e; border-radius: 8px; font-size: 0.85rem; }
+        .viewer-panel h4 { margin: 0 0 8px 0; font-size: 0.9rem; color: #aaa; }
+        .viewer-list { display: flex; flex-wrap: wrap; gap: 8px; }
+        .viewer-tag { background: #2d2d44; padding: 4px 10px; border-radius: 20px; font-family: monospace; font-size: 0.75rem; }
+        .viewer-tag .ip { color: #8bc34a; }
+        .viewer-tag .ping { color: #ffb74d; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h2>Room #{{ file_id }}</h2>
-            <a href="/">← Return Home</a>
-        </header>
-
-        <div class="player-wrapper">
-            {% if mimetype.startswith('audio/') %}
-                <audio id="media-player" controls preload="auto">
-                    <source src="/stream/{{ file_id }}" type="{{ mimetype }}">
-                    Your browser does not support the audio element.
-                </audio>
-            {% else %}
-                <video id="media-player" controls preload="auto" playsinline>
-                    <source src="/stream/{{ file_id }}" type="{{ mimetype }}">
-                    Your browser does not support the video element.
-                </video>
-            {% endif %}
-        </div>
-
-        <div class="dashboard">
-            <h3>Active Diagnostics (<span id="viewer-count">0</span> Peer Tabs Connected)</h3>
-            <ul id="viewers-container" class="viewers-list">
-                </ul>
-        </div>
+    <video id="videoPlayer" controls width="100%">
+        <source src="{{ url_for('stream_file', file_id=file_id) }}" type="{{ mimetype }}">
+    </video>
+    <div class="controls">
+        <button id="playBtn">▶ Play</button>
+        <button id="pauseBtn">⏸ Pause</button>
+        <button id="syncBtn">🔄 Sync Now</button>
+        <span class="status" id="syncStatus">🟢 Synced</span>
+        <span class="latency-badge" id="latencyInfo"></span>
+    </div>
+    <div class="viewer-panel" id="viewerPanel" style="display: none;">
+        <h4>👥 Viewers (<span id="viewerCount">0</span>)</h4>
+        <div id="viewerList" class="viewer-list"><span style="color:#666;">Loading...</span></div>
     </div>
 
     <script>
+        // --- DOM Elements ---
+        const video = document.getElementById('videoPlayer');
         const fileId = {{ file_id }};
         const socket = io();
-        const player = document.getElementById('media-player');
+
+        // --- Sync State Variables --- 
+        let syncing = false;          // User action in progress
+        let isCorrecting = false;     // Server-driven correction in progress
+        let suppressEvents = false;   // Dedicated flag to prevent feedback loops
+        let lastSeq = -1;
+        let correctionTimeout = null;
+        let seekDebounce = null;
+        let heartbeatInterval = null;
+        let serverTimeOffset = 0;      // Estimated offset between client and server clocks
         
-        let currentSeq = -1;
-        let isProgrammatic = false;
+        // Configuration Constants
+        const SOFT_DRIFT = 0.35;
+        const HARD_DRIFT_PLAYING = 1.2;   // Less aggressive while playing
+        const HARD_DRIFT_PAUSED = 0.15;   // Very strict when paused
+        const HEARTBEAT_INTERVAL_MS = 4000;
 
-        // Connect and Join Room
-        socket.on('connect', () => {
-            socket.emit('join_watch', { file_id: fileId });
-        });
+        // --- Core Synchronization Logic ---
+        
+        // Calculate target position with clock drift compensation
+        function getTargetPosition(state) {
+            const localNow = Date.now() / 1000;
+            const syncedServerNow = state.server_now + serverTimeOffset;
+            const elapsed = syncedServerNow - state.updated_at;
 
-        // Server Event Sync Router
-        socket.on('watch_update', (data) => {
-            if (data.seq <= currentSeq) return; // Drop outdated sequencing frames
-            currentSeq = data.seq;
-
-            isProgrammatic = true;
-
-            const clientNow = Date.now() / 1000;
-            let targetPosition = data.position;
-
-            // Compensate for network/propagation delays dynamically
-            if (data.playing && data.last_action !== 'pause') {
-                const latencyOffset = clientNow - data.updated_at;
-                targetPosition += latencyOffset;
+            if (state.playing) {
+                // Interpolate forward based on our best estimate of server time
+                return state.position + elapsed;
             }
-
-            // Sync playback status state
-            if (data.playing) {
-                if (player.paused) {
-                    player.play().catch(() => {});
-                }
-                // Only scrub tracking cursor if client drift exceeds critical delta window threshold
-                if (Math.abs(player.currentTime - targetPosition) > 0.6) {
-                    player.currentTime = targetPosition;
-                }
-            } else {
-                if (!player.paused) {
-                    player.pause();
-                }
-                player.currentTime = targetPosition;
-            }
-
-            setTimeout(() => { isProgrammatic = false; }, 150);
-        });
-
-        // Event Listeners to push state upstream to room
-        function emitAction(actionName) {
-            if (isProgrammatic) return;
-            socket.emit('watch_action', {
-                file_id: fileId,
-                action: actionName,
-                position: player.currentTime,
-                client_time: Date.now() / 1000
-            });
+            return state.position;
         }
 
-        player.addEventListener('play', () => emitAction('play'));
-        player.addEventListener('pause', () => emitAction('pause'));
-        player.addEventListener('seeked', () => emitAction('seek'));
-
-        // Client Heartbeat Cycle Engine
-        setInterval(() => {
-            if (!player.paused && !isProgrammatic) {
-                socket.emit('watch_action', {
-                    file_id: fileId,
-                    action: 'heartbeat',
-                    position: player.currentTime,
-                    client_time: Date.now() / 1000
-                });
+        // Adaptive playback rate correction
+        function applyPlaybackRateCorrection(diff) {
+            if (Math.abs(diff) <= SOFT_DRIFT) {
+                if (video.playbackRate !== 1.0) video.playbackRate = 1.0;
+                return;
             }
-        }, 4000);
+            
+            // Gentle, adaptive correction
+            const maxRateChange = 0.04;
+            let correction = Math.min(Math.abs(diff) * 0.08, maxRateChange);
+            let newRate = diff > 0 ? 1.0 + correction : 1.0 - correction;
+            
+            // Clamp to safe range
+            newRate = Math.min(Math.max(newRate, 0.92), 1.08);
+            
+            if (Math.abs(video.playbackRate - newRate) > 0.005) {
+                video.playbackRate = newRate;
+            }
+        }
 
-        // Fetch Diagnostics Metrics
-        async function fetchDiagnostics() {
+        // Apply server state to local video
+        function applyState(state) {
+            // Prevent processing old or out-of-order updates
+            if (state.seq <= lastSeq) return;
+            lastSeq = state.seq;
+
+            if (syncing || isCorrecting) return;
+
+            const target = getTargetPosition(state);
+            const current = video.currentTime;
+            let diff = target - current;
+            
+            // Clamp diff to avoid extreme corrections on seek
+            diff = Math.min(Math.max(diff, -5), 5);
+
+            // Determine correction strategy
+            const isPaused = !state.playing;
+            const hardDriftThreshold = isPaused ? HARD_DRIFT_PAUSED : HARD_DRIFT_PLAYING;
+            
+            let needsHardSeek = Math.abs(diff) > hardDriftThreshold;
+            
+            // Special case: never hard-seek if we're already very close while playing
+            if (!isPaused && Math.abs(diff) < 0.5) needsHardSeek = false;
+
+            if (needsHardSeek) {
+                // HARD CORRECTION: Direct seek
+                suppressEvents = true;
+                isCorrecting = true;
+
+                // Reset suppression when the browser confirms the seek landed,
+                // not on a fixed timer — prevents events leaking through slow seeks.
+                function onHardSeeked() {
+                    video.removeEventListener('seeked', onHardSeeked);
+                    clearTimeout(hardSeekFallback);
+                    isCorrecting = false;
+                    suppressEvents = false;
+                    document.getElementById('syncStatus').innerHTML = '🟢 Synced';
+                }
+                const hardSeekFallback = setTimeout(onHardSeeked, 1500);
+                video.addEventListener('seeked', onHardSeeked);
+
+                video.currentTime = Math.max(0, target);
+                document.getElementById('syncStatus').innerHTML = `🎬 Hard sync (${diff.toFixed(2)}s)`;
+            } 
+            else {
+                // SOFT CORRECTION: Playback rate adjustment
+                applyPlaybackRateCorrection(diff);
+                
+                if (Math.abs(diff) > 0.1) {
+                    document.getElementById('syncStatus').innerHTML = `🎯 Drift ${diff.toFixed(2)}s`;
+                } else if (document.getElementById('syncStatus').innerHTML.includes('Drift')) {
+                    document.getElementById('syncStatus').innerHTML = '🟢 Synced';
+                }
+            }
+
+            // Sync play/pause state — set suppressEvents BEFORE calling play/pause,
+            // otherwise the browser event fires and handlePlay/handlePause re-send
+            // the action to the server, triggering a broadcast loop.
+            if (state.playing && video.paused && !suppressEvents) {
+                suppressEvents = true;
+                video.play()
+                    .catch(e => console.log('autoplay blocked:', e))
+                    .finally(() => setTimeout(() => { suppressEvents = false; }, 80));
+            } else if (!state.playing && !video.paused && !suppressEvents) {
+                suppressEvents = true;
+                video.pause();
+                setTimeout(() => { suppressEvents = false; }, 80);
+            }
+        }
+
+        // --- Clock Synchronization ---
+        socket.on('watch_update', (state) => {
+            // Continuously refine the server time offset using an exponential moving average
+            const localNow = Date.now() / 1000;
+            const rawOffset = state.server_now - localNow;
+            serverTimeOffset = serverTimeOffset * 0.9 + rawOffset * 0.1;
+            
+            // Update latency display (RTT estimation)
+            const latencyMs = Math.round(Math.abs(rawOffset) * 1000 * 2);
+            document.getElementById('latencyInfo').innerHTML = `📡 ${latencyMs}ms`;
+            
+            applyState(state);
+        });
+
+        // --- Network Actions (with suppression) ---
+        async function sendAction(action, position = null) {
+            if (syncing || isCorrecting) return;
+            
+            syncing = true;
+            
+            const payload = { action };
+            if (position !== null) payload.position = position;
+            
+            // Include current client-side time for better server-side sync
+            payload.client_time = Date.now() / 1000;
+            
             try {
-                const res = await fetch(`/watch/viewers/${fileId}`);
-                const data = await res.json();
-                document.getElementById('viewer-count').innerText = data.count;
-                
-                const container = document.getElementById('viewers-container');
-                container.innerHTML = '';
-                
-                data.viewers.forEach(v => {
-                    const li = document.createElement('li');
-                    li.innerHTML = `
-                        <span>🖥️ Node IP: <strong>${v.ip}</strong></span>
-                        <span>Latency: <span class="badge">${v.latency}ms</span> | Active: ${v.active_seconds}s</span>
-                    `;
-                    container.appendChild(li);
+                await fetch(`/watch/action/${fileId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
                 });
             } catch (err) {
-                console.error("Failed fetching diagnostic telemetry updates:", err);
+                console.warn('Action error:', err);
+            }
+            
+            syncing = false;
+        }
+
+        // --- Regular Heartbeat (Prevents Silent Drift) ---
+        function startHeartbeat() {
+            if (heartbeatInterval) clearInterval(heartbeatInterval);
+            heartbeatInterval = setInterval(() => {
+                // Don't send heartbeat if we're currently syncing or correcting
+                if (video.paused) return;
+                if (syncing || isCorrecting) return;
+                
+                // Send current position to server to refresh authoritative state
+                sendAction('heartbeat', video.currentTime);
+            }, HEARTBEAT_INTERVAL_MS);
+        }
+        
+        function stopHeartbeat() {
+            if (heartbeatInterval) {
+                clearInterval(heartbeatInterval);
+                heartbeatInterval = null;
             }
         }
 
-        setInterval(fetchDiagnostics, 3000);
-        fetchDiagnostics();
+        // --- Event Listeners (with suppression) ---
+        function handlePlay() {
+            if (suppressEvents) return;
+            sendAction('play', video.currentTime);
+            startHeartbeat();
+        }
+        
+        function handlePause() {
+            if (suppressEvents) return;
+            sendAction('pause', video.currentTime);
+            stopHeartbeat();
+        }
+        
+        function handleSeek() {
+            if (seekDebounce) clearTimeout(seekDebounce);
+            if (suppressEvents) return;
+            
+            seekDebounce = setTimeout(() => {
+                sendAction('seek', video.currentTime);
+            }, 120);
+        }
+
+        video.addEventListener('play', handlePlay);
+        video.addEventListener('pause', handlePause);
+        video.addEventListener('seeked', handleSeek);
+        
+        // --- Manual Controls ---
+        document.getElementById('playBtn').addEventListener('click', () => {
+            if (!syncing && !isCorrecting) video.play();
+        });
+        document.getElementById('pauseBtn').addEventListener('click', () => {
+            if (!syncing && !isCorrecting) video.pause();
+        });
+        document.getElementById('syncBtn').addEventListener('click', async () => {
+            if (syncing || isCorrecting) return;
+            // Force a hard sync by requesting the current server state
+            // and then seeking to it.
+            sendAction('seek', video.currentTime);
+            document.getElementById('syncStatus').innerHTML = '🔄 Force sync sent';
+            setTimeout(() => {
+                if (!syncing) document.getElementById('syncStatus').innerHTML = '🟢 Synced';
+            }, 1000);
+        });
+
+        // --- Periodic Viewer List Refresh (Polling, can be kept as-is) ---
+        async function fetchViewers() {
+            try {
+                const resp = await fetch(`/watch/viewers/${fileId}`);
+                if (!resp.ok) throw new Error();
+                const data = await resp.json();
+                document.getElementById('viewerCount').innerHTML = data.count;
+                const viewerList = document.getElementById('viewerList');
+                const viewerPanel = document.getElementById('viewerPanel');
+                if (data.count > 0) {
+                    viewerPanel.style.display = 'block';
+                    viewerList.innerHTML = data.viewers.map(v => {
+                        const shortIp = v.ip.replace('::ffff:', '').replace('::1', 'localhost');
+                        return `<div class="viewer-tag"><span class="ip">${shortIp}</span><span class="ping">📡 ${v.latency}ms</span></div>`;
+                    }).join('');
+                } else {
+                    viewerPanel.style.display = 'none';
+                }
+            } catch (err) { console.warn('Viewer fetch error:', err); }
+        }
+        setInterval(fetchViewers, 3000);
+        fetchViewers();
+
+        // --- Initialization ---
+        socket.emit('join_watch', { file_id: fileId });
+        
+        // Reset playback rate on page unload
+        window.addEventListener('beforeunload', () => {
+            if (heartbeatInterval) clearInterval(heartbeatInterval);
+            video.playbackRate = 1.0;
+        });
     </script>
 </body>
 </html>
