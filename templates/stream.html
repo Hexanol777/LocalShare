@@ -26,7 +26,7 @@
 </head>
 <body>
     <video id="videoPlayer" controls width="100%">
-        <source src="{{ url_for('stream_file', file_id=file_id) }}" type="{{ mimetype }}">
+        <source src="{{ url_for('files.stream_file', file_id=file_id) }}" type="{{ mimetype }}">
     </video>
     <div class="controls">
         <button id="playBtn">▶ Play</button>

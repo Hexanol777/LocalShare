@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 
-<a href="{{ url_for('chat') }}" class="chat-button">Chat</a>
+<a href="{{ url_for('chat.chat') }}" class="chat-button">Chat</a>
 
 <head>
     <meta charset="UTF-8">
@@ -50,9 +50,9 @@
                                 <td>{{ file.upload_time.strftime('%b %d, %Y, %I:%M %p') }}</td>
                                 <td>{{ file.display_size }}</td>
                                 <td>
-                                    <a href="{{ url_for('download_file', file_id=file.id) }}" class="button download-btn">Download</a>
+                                    <a href="{{ url_for('files.download_file', file_id=file.id) }}" class="button download-btn">Download</a>
                                     {% if file.extension in streamable_extensions %}
-                                        <a href="{{ url_for('stream_page', file_id=file.id) }}" class="button stream-btn">Stream</a>
+                                        <a href="{{ url_for('files.stream_page', file_id=file.id) }}" class="button stream-btn">Stream</a>
                                     {% endif %}
                                 </td>
                             </tr>
