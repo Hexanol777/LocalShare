@@ -2,108 +2,32 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>LAN Chat</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat – LocalShare</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-
-    <style>
-        body {
-            margin: 0;
-            padding: 0;
-            font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-            background: #f4f4f4;
-        }
-
-        .chat-wrapper {
-            max-width: 900px;
-            margin: 30px auto;
-            padding: 0 15px;
-        }
-
-        .chat-header {
-           font-size: 1.5rem;
-           font-weight: 600;
-           margin-bottom: 12px;
-           text-align: center;
-        }
-
-        .chat-box {
-            height: 65vh;
-            background: #ffffff;
-            border: 1px solid #d0d0d0;
-            border-radius: 6px;
-            padding: 12px;
-            overflow-y: auto;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-        }
-
-        .msg {
-            margin-bottom: 6px;
-            line-height: 1.4;
-            word-wrap: break-word;
-        }
-
-        .timestamp {
-        color: #666;
-        font-size: 0.85rem;
-        margin-right: 6px;
-        font-family: monospace;
-        }
-
-        .sender {
-            font-weight: 600;
-            margin-right: 4px;
-        }
-
-        .input-bar {
-            display: flex;
-            gap: 8px;
-            margin-top: 10px;
-        }
-
-        .input-bar input {
-            flex: 1;
-            padding: 8px 10px;
-            font-size: 0.95rem;
-            border-radius: 4px;
-            border: 1px solid #ccc;
-            outline: none;
-        }
-
-        .input-bar input:focus {
-            border-color: #4a90e2;
-        }
-
-        .input-bar button {
-            padding: 8px 16px;
-            font-size: 0.95rem;
-            border-radius: 4px;
-            border: none;
-            cursor: pointer;
-            background: #4a90e2;
-            color: white;
-            font-weight: 500;
-        }
-
-        .input-bar button:hover {
-            background: #357abd;
-        }
-
-        .input-bar button:active {
-            background: #2d6399;
-        }
-    </style>
 </head>
 <body>
 
 <div class="chat-wrapper">
-    <div class="chat-header">LAN Chat</div>
 
-    <div id="chat-box" class="chat-box"></div>
+    <div class="chat-card">
 
-    <div class="input-bar">
-        <input type="text" id="message" placeholder="Type a message…" autocomplete="off">
-        <button onclick="sendMessage()">Send</button>
+        <div class="chat-topbar">
+            <h2>💬 LAN Chat</h2>
+            <a class="nav-pill" href="{{ url_for('files.browse') }}">← Browse</a>
+        </div>
+
+        <div id="chat-box" class="chat-box"></div>
+
+        <div class="chat-input-bar">
+            <input type="text" id="message"
+                   placeholder="Type a message…"
+                   autocomplete="off">
+            <button onclick="sendMessage()">Send</button>
+        </div>
+
     </div>
+
 </div>
 
 <script>
@@ -118,19 +42,16 @@ function fetchMessages() {
                 const div = document.createElement('div');
                 div.className = 'msg';
                 const time = new Date(m.timestamp).toLocaleTimeString([], {
-                  hour: '2-digit',
-                  minute: '2-digit'
+                    hour: '2-digit', minute: '2-digit'
                 });
-
-                div.innerHTML = `
-                  <span class="timestamp">[${time}]</span>
-                  <span class="sender">${m.sender}</span>
-                  ${m.content}
-                `;
+                div.innerHTML =
+                    `<span class="timestamp">[${time}]</span>` +
+                    `<span class="sender">${m.sender}</span>` +
+                    m.content;
                 box.appendChild(div);
                 lastId = m.id;
-                box.scrollTop = box.scrollHeight;
             });
+            box.scrollTop = box.scrollHeight;
         });
 }
 
@@ -138,13 +59,11 @@ function sendMessage() {
     const input = document.getElementById('message');
     const msg = input.value.trim();
     if (!msg) return;
-
     fetch('/chat/send', {
         method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({message: msg})
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: msg })
     });
-
     input.value = '';
 }
 

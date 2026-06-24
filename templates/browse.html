@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LocalShare</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<div class="container">
+
+    <!-- HEADER -->
+    <div class="header-box">
+        <h1>LocalShare</h1>
+        <a class="nav-pill" href="{{ url_for('chat.chat') }}">💬 Chat</a>
+    </div>
+
+    <!-- BREADCRUMBS -->
+    <div class="breadcrumbs">
+        <a href="{{ url_for('files.browse') }}">Home</a>
+        {% for crumb in breadcrumbs %}
+            / <a href="{{ url_for('files.browse', path=crumb.path) }}">{{ crumb.name }}</a>
+        {% endfor %}
+    </div>
+
+    <!-- UPLOAD ISLAND -->
+    <div class="upload-island">
+
+        <div class="upload-island-header">
+            <span class="upload-island-title">Upload</span>
+            <span class="upload-target">
+                {{ ('/' + current_path) if current_path else '/ (root)' }}
+            </span>
+        </div>
+
+        <label class="folder-toggle">
+            <input type="checkbox" id="folder-mode">
+            Upload entire folder
+        </label>
+
+        <div id="drop-area" class="dropzone">
+            <div class="dropzone-icon">⬆</div>
+            <p id="dropzone-label">Drag &amp; drop files here, or <span class="dropzone-link">click to browse</span></p>
+            <form id="upload-form" method="POST"
+                  action="{{ url_for('files.upload_file') }}"
+                  enctype="multipart/form-data">
+                <input type="hidden" name="path" value="{{ current_path }}">
+                <input type="file" name="file" multiple id="file-input" style="display:none;">
+            </form>
+        </div>
+
+        <div id="upload-progress-wrap" class="upload-progress-wrap">
+            <progress id="progress-bar" value="0" max="100"></progress>
+            <p class="upload-stats">
+                <span id="upload-speed">0 MB/s</span>
+                &middot;
+                <span id="estimated-time">calculating…</span>
+            </p>
+        </div>
+
+    </div>
+
+    <!-- READER BUTTON (image-only folders) -->
+    {% if image_only %}
+    <div style="text-align:center; margin-bottom:20px;">
+        <a class="reader-button" href="{{ url_for('files.reader', path=current_path) }}">
+            Open Reader
+        </a>
+    </div>
+    {% endif %}
+
+    <!-- FILE LIST -->
+    <div class="file-list">
+
+        {% if current_path %}
+        <a class="file-row folder-row" href="{{ url_for('files.browse', path=parent_path) }}">
+            <div class="file-main">
+                <div class="thumb folder-thumb">📁</div>
+                <div class="file-info"><div class="file-name">..</div></div>
+            </div>
+            <div class="file-meta">Parent Folder</div>
+        </a>
+        {% endif %}
+
+        {% for item in items %}
+
+        {% if item.type == 'dir' %}
+        <a class="file-row folder-row" href="{{ url_for('files.browse', path=item.path) }}">
+            <div class="file-main">
+                <div class="thumb folder-thumb">📁</div>
+                <div class="file-info">
+                    <div class="file-name" title="{{ item.name }}">{{ item.name }}</div>
+                </div>
+            </div>
+            <div class="file-meta">Folder</div>
+        </a>
+
+        {% else %}
+        <div class="file-row">
+            <div class="file-main">
+                {% if item.has_thumbnail %}
+                <img class="thumb"
+                     src="{{ url_for('files.thumbnail', file_id=item.file_id) }}"
+                     loading="lazy"
+                     onerror="this.outerHTML='<div class=\'thumb file-thumb\'>📄</div>'">
+                {% else %}
+                <div class="thumb file-thumb">📄</div>
+                {% endif %}
+
+                <div class="file-info">
+                    <div class="file-name" title="{{ item.name }}">{{ item.name }}</div>
+                    <div class="file-meta-mobile">{{ item.size }}</div>
+                </div>
+            </div>
+
+            <div class="file-meta">{{ item.size }}</div>
+
+            <div class="file-actions">
+                <a class="action-btn download-btn"
+                   href="{{ url_for('files.download_file', file_id=item.file_id) }}">Download</a>
+                {% if item.streamable %}
+                <a class="action-btn stream-btn"
+                   href="{{ url_for('files.stream_page', file_id=item.file_id) }}">Stream</a>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+
+        {% endfor %}
+    </div>
+</div>
+
+<script>
+(function () {
+    const dropArea     = document.getElementById('drop-area');
+    const fileInput    = document.getElementById('file-input');
+    const folderMode   = document.getElementById('folder-mode');
+    const progressWrap = document.getElementById('upload-progress-wrap');
+    const progressBar  = document.getElementById('progress-bar');
+    const speedElem    = document.getElementById('upload-speed');
+    const timeElem     = document.getElementById('estimated-time');
+    const label        = document.getElementById('dropzone-label');
+
+    const currentPath = {{ current_path | tojson }};
+    const uploadUrl   = {{ url_for('files.upload_file') | tojson }};
+
+    folderMode.addEventListener('change', function () {
+        if (this.checked) {
+            fileInput.setAttribute('webkitdirectory', '');
+            fileInput.setAttribute('directory', '');
+            label.innerHTML = 'Drag &amp; drop a folder here, or <span class="dropzone-link">click to select</span>';
+        } else {
+            fileInput.removeAttribute('webkitdirectory');
+            fileInput.removeAttribute('directory');
+            label.innerHTML = 'Drag &amp; drop files here, or <span class="dropzone-link">click to browse</span>';
+        }
+    });
+
+    ['dragenter','dragover','dragleave','drop'].forEach(ev =>
+        dropArea.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); })
+    );
+    ['dragenter','dragover'].forEach(ev =>
+        dropArea.addEventListener(ev, () => dropArea.classList.add('dragover'))
+    );
+    ['dragleave','drop'].forEach(ev =>
+        dropArea.addEventListener(ev, () => dropArea.classList.remove('dragover'))
+    );
+
+    dropArea.addEventListener('drop', e => {
+        const f = e.dataTransfer.files;
+        if (f.length) { fileInput.files = f; startUpload(); }
+    });
+    dropArea.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', startUpload);
+
+    function startUpload() {
+        const files = fileInput.files;
+        if (!files.length) return;
+
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', uploadUrl, true);
+        progressWrap.style.display = 'block';
+        progressBar.value = 0;
+
+        let lastLoaded = 0, lastTime = Date.now();
+
+        xhr.upload.onprogress = function (e) {
+            if (!e.lengthComputable) return;
+            const now   = Date.now();
+            const dt    = (now - lastTime) / 1000 || 0.001;
+            const speed = (e.loaded - lastLoaded) / dt / 1024 / 1024;
+            speedElem.textContent = speed.toFixed(2) + ' MB/s';
+            progressBar.value     = (e.loaded / e.total) * 100;
+            const eta = speed > 0 ? (e.total - e.loaded) / (speed * 1024 * 1024) : 0;
+            timeElem.textContent  = eta.toFixed(0) + 's remaining';
+            lastLoaded = e.loaded;
+            lastTime   = now;
+        };
+
+        xhr.onload  = () => { progressWrap.style.display = 'none'; location.reload(); };
+        xhr.onerror = () => { alert('Upload failed'); progressWrap.style.display = 'none'; };
+
+        const fd = new FormData();
+        fd.append('path', currentPath);
+        for (const f of files) fd.append('file', f, f.webkitRelativePath || f.name);
+        xhr.send(fd);
+    }
+})();
+</script>
+
+</body>
+</html>
