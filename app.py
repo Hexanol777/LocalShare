@@ -2,6 +2,7 @@ import eventlet
 eventlet.monkey_patch()
 
 import os
+import sys
 import logging
 from flask import Flask
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -12,7 +13,20 @@ logging.basicConfig(level=logging.INFO)
 
 # --- App setup ---
 app = Flask(__name__)
-app.config['UPLOAD_FOLDER']                  = 'uploads'
+
+# --- NEW: CLI Argument Parsing & Safety Flags ---
+custom_folder = sys.argv[1] if len(sys.argv) > 1 else None
+
+if custom_folder:
+    if not os.path.isdir(custom_folder):
+        print(f"Error: Directory '{custom_folder}' does not exist.")
+        sys.exit(1)
+    app.config['UPLOAD_FOLDER'] = os.path.abspath(custom_folder)
+    app.config['CLEANUP_ENABLED'] = False
+else:
+    app.config['UPLOAD_FOLDER'] = 'uploads'
+    app.config['CLEANUP_ENABLED'] = True
+
 app.config['SQLALCHEMY_DATABASE_URI']        = 'sqlite:///database.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['MAX_CONTENT_LENGTH']             = 10_000 * 1024 * 1024  # 10 GB
