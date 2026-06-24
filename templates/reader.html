@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Reader – LocalShare</title>
+<style>
+body {
+    margin: 0;
+    background: #111;
+    color: #ddd;
+    font-family: system-ui, sans-serif;
+}
+
+/* ---------- TOPBAR ---------- */
+
+.topbar {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: rgba(17,17,17,0.95);
+    border-bottom: 1px solid #222;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 15px;
+}
+
+.topbar-left,
+.topbar-center,
+.topbar-right { flex: 1; }
+
+.topbar-center { text-align: center; font-weight: 600; }
+.topbar-right  { text-align: right; }
+
+.topbar a,
+.mode-button {
+    color: #ddd;
+    text-decoration: none;
+    background: #222;
+    border: none;
+    padding: 7px 12px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 0.9rem;
+}
+
+.topbar a:hover,
+.mode-button:hover { background: #333; }
+
+.progress { font-size: 0.95rem; color: #aaa; }
+
+/* ---------- VERTICAL ---------- */
+
+.reader.vertical { max-width: 1100px; margin: auto; }
+
+.reader.vertical .page {
+    display: block;
+    width: 100%;
+    height: auto;
+    margin-bottom: 8px;
+    background: #1a1a1a;
+}
+
+/* ---------- HORIZONTAL ---------- */
+
+.reader.horizontal {
+    height: calc(100vh - 60px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    position: relative;
+}
+
+.reader.horizontal .page {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    display: none;
+}
+
+.reader.horizontal .page.active { display: block; }
+
+/* ---------- NAV ZONES ---------- */
+
+.nav-zone {
+    position: fixed;
+    top: 60px;
+    bottom: 0;
+    width: 50%;
+    z-index: 50;
+    cursor: pointer;
+}
+
+.nav-left  { left: 0; }
+.nav-right { right: 0; }
+.hidden    { display: none; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+    <div class="topbar-left">
+        <a href="{{ url_for('files.browse', path=folder) }}">← Back</a>
+    </div>
+    <div class="topbar-center">
+        <span class="progress" id="progress">1 / {{ images|length }}</span>
+    </div>
+    <div class="topbar-right">
+        <button class="mode-button" id="mode-toggle">Horizontal Mode</button>
+    </div>
+</div>
+
+<div id="reader" class="reader vertical">
+    {% for image in images %}
+    <img class="page"
+         src="{{ url_for('files.raw_file', file_id=image.file_id) }}"
+         loading="lazy"
+         alt="{{ image.name }}">
+    {% endfor %}
+</div>
+
+<div id="nav-left"  class="nav-zone nav-left  hidden"></div>
+<div id="nav-right" class="nav-zone nav-right hidden"></div>
+
+<script>
+const reader     = document.getElementById('reader');
+const pages      = document.querySelectorAll('.page');
+const progress   = document.getElementById('progress');
+const modeButton = document.getElementById('mode-toggle');
+const navLeft    = document.getElementById('nav-left');
+const navRight   = document.getElementById('nav-right');
+
+const STORAGE_KEY = 'reader-mode-' + window.location.pathname + window.location.search;
+let mode = localStorage.getItem(STORAGE_KEY) || 'vertical';
+let currentPage = 0;
+
+function setMode(newMode) {
+    mode = newMode;
+    localStorage.setItem(STORAGE_KEY, mode);
+
+    if (mode === 'horizontal') {
+        reader.classList.replace('vertical', 'horizontal');
+        navLeft.classList.remove('hidden');
+        navRight.classList.remove('hidden');
+        modeButton.textContent = 'Vertical Mode';
+        pages.forEach(p => p.classList.remove('active'));
+        pages[currentPage].classList.add('active');
+    } else {
+        reader.classList.replace('horizontal', 'vertical');
+        navLeft.classList.add('hidden');
+        navRight.classList.add('hidden');
+        modeButton.textContent = 'Horizontal Mode';
+        pages.forEach(p => p.classList.remove('active'));
+    }
+    updateProgress();
+}
+
+function updateProgress() {
+    if (mode === 'horizontal') {
+        progress.textContent = `${currentPage + 1} / ${pages.length}`;
+    } else {
+        let closest = 0, closestDist = Infinity;
+        pages.forEach((p, i) => {
+            const d = Math.abs(p.getBoundingClientRect().top);
+            if (d < closestDist) { closestDist = d; closest = i; }
+        });
+        progress.textContent = `${closest + 1} / ${pages.length}`;
+    }
+}
+
+function showPage(index) {
+    if (index < 0 || index >= pages.length) return;
+    pages[currentPage].classList.remove('active');
+    currentPage = index;
+    pages[currentPage].classList.add('active');
+    updateProgress();
+}
+
+modeButton.addEventListener('click', () => setMode(mode === 'vertical' ? 'horizontal' : 'vertical'));
+navLeft.addEventListener('click',  () => showPage(currentPage - 1));
+navRight.addEventListener('click', () => showPage(currentPage + 1));
+
+document.addEventListener('keydown', e => {
+    if (mode !== 'horizontal') return;
+    if (e.key === 'ArrowRight') showPage(currentPage + 1);
+    if (e.key === 'ArrowLeft')  showPage(currentPage - 1);
+});
+
+window.addEventListener('scroll', () => {
+    if (mode === 'vertical') updateProgress();
+});
+
+setMode(mode);
+</script>
+</body>
+</html>
