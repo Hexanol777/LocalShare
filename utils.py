@@ -81,3 +81,55 @@ def cleanup_rate_limits(client_last_update, client_update_lock):
             del client_last_update[k]
         if expired:
             logger.info(f"Cleaned up {len(expired)} rate limit entries")
+
+
+def start_virtual_mdns(hostname="share", port=5000):
+    """
+    Spins up a background worker thread to broadcast a custom local domain 
+    alias (e.g., http://share.local:5000) using multicast DNS (mDNS), 
+    tricking local devices into finding this machine without modifying the 
+    host OS computer name.
+    """
+    # Use raw socket routing through a custom import name to bypass scoped re-import collision
+    import sys
+    import socket
+    from zeroconf import Zeroconf, ServiceInfo
+
+    # Dynamically retrieve the current primary LAN IP address
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)    
+    try:
+        s.connect(('8.8.8.8', 80))
+        local_ip = s.getsockname()[0]
+    except Exception:
+        local_ip = '127.0.0.1'
+    finally:
+        s.close()
+
+    # Convert the text IP into raw bytes required by network packets
+    try:
+        raw_ip = socket.inet_aton(local_ip)
+    except Exception:
+        raw_ip = socket.inet_aton('127.0.0.1')
+
+    # Formulate the service broadcast parameters
+    service_type = "_http._tcp.local."
+    service_name = f"Share-WebServer.{service_type}"
+    server_domain = f"{hostname}.local."
+
+    info = ServiceInfo(
+        type_=service_type,
+        name=service_name,
+        addresses=[raw_ip],
+        port=port,
+        properties={},
+        server=server_domain
+    )
+
+    # Initialize Zeroconf by strictly binding it to your local IP address interface.
+    # Passing the individual IP inside a list ([local_ip]) works perfectly across ALL 
+    zeroconf_instance = Zeroconf(interfaces=[local_ip])    
+
+    logger.info(f"Registering virtual mDNS host mapping: http://{hostname}.local:{port} -> {local_ip}")
+    zeroconf_instance.register_service(info)
+
+    return zeroconf_instance, info, local_ip

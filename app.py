@@ -1,6 +1,3 @@
-import eventlet
-eventlet.monkey_patch()
-
 import os
 import sys
 import logging
@@ -10,11 +7,12 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from extensions import db, socketio
 
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # --- App setup ---
 app = Flask(__name__)
 
-# --- NEW: CLI Argument Parsing & Safety Flags ---
+# CLI Argument Parsing & Safety Flag
 custom_folder = sys.argv[1] if len(sys.argv) > 1 else None
 
 if custom_folder:
@@ -32,7 +30,7 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['MAX_CONTENT_LENGTH']             = 10_000 * 1024 * 1024  # 10 GB
 
 db.init_app(app)
-socketio.init_app(app, cors_allowed_origins='*', async_mode='eventlet')
+socketio.init_app(app, cors_allowed_origins='*', async_mode='threading')
 
 # --- Blueprints ---
 # Importing watch also registers the @socketio.on('join_watch') handler
@@ -48,7 +46,7 @@ app.register_blueprint(chat_bp)
 app.register_blueprint(watch_bp)
 
 # --- Scheduler ---
-from utils import cleanup_old_files, cleanup_watch_sessions, cleanup_rate_limits
+from utils import cleanup_old_files, cleanup_watch_sessions, cleanup_rate_limits, start_virtual_mdns
 
 def _cleanup_files():
     with app.app_context():
@@ -84,7 +82,16 @@ if __name__ == '__main__':
     finally:
         s.close()
 
-    print(f"Running on:\n  http://{local_ip}:5000\n  http://127.0.0.1:5000\n  http://localhost:5000")
+    # --- TRICK mDNS USING ZEROCONF ---
+    zeroconf, service_info, machine_ip = start_virtual_mdns(hostname="share", port=5000)
+
+    print(f"Running on:\n  http://{machine_ip}:5000\n  http://localhost:5000\n  http://share.local:5000")
     print("Press CTRL+C to quit")
 
-    socketio.run(app, host='0.0.0.0', port=5000)
+    try:
+        socketio.run(app, host='0.0.0.0', port=5000)
+    finally:
+        # Guarantee network cleanup hooks fire safely if application exits
+        logger.info("De-registering broadcast parameters from local subnet routing tables...")
+        zeroconf.unregister_service(service_info)
+        zeroconf.close()
