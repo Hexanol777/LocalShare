@@ -83,7 +83,7 @@ def cleanup_rate_limits(client_last_update, client_update_lock):
             logger.info(f"Cleaned up {len(expired)} rate limit entries")
 
 
-def start_virtual_mdns(hostname="share", port=5000):
+def start_virtual_mdns(hostname="share", port=80):
     """
     Spins up a background worker thread to broadcast a custom local domain 
     alias (e.g., http://share.local:5000) using multicast DNS (mDNS), 

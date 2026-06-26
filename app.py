@@ -83,13 +83,13 @@ if __name__ == '__main__':
         s.close()
 
     # --- TRICK mDNS USING ZEROCONF ---
-    zeroconf, service_info, machine_ip = start_virtual_mdns(hostname="share", port=5000)
+    zeroconf, service_info, machine_ip = start_virtual_mdns(hostname="share", port=80)
 
     print(f"Running on:\n  http://{machine_ip}:5000\n  http://localhost:5000\n  http://share.local:5000")
     print("Press CTRL+C to quit")
 
     try:
-        socketio.run(app, host='0.0.0.0', port=5000)
+        socketio.run(app, host='0.0.0.0', port=80)
     finally:
         # Guarantee network cleanup hooks fire safely if application exits
         logger.info("De-registering broadcast parameters from local subnet routing tables...")
