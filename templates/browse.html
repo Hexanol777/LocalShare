@@ -13,7 +13,17 @@
     <!-- HEADER -->
     <div class="header-box">
         <h1>LocalShare</h1>
-        <a class="nav-pill" href="{{ url_for('chat.chat') }}">💬 Chat</a>
+        <div class="header-actions">
+            {% if admin_mode %}
+            <span class="admin-badge">Admin</span>
+            {% endif %}
+            <a class="nav-pill" href="{{ url_for('chat.chat') }}">💬 Chat</a>
+            {% if admin_mode %}
+            <a class="nav-pill nav-pill-logout" href="{{ url_for('auth.logout') }}">Logout</a>
+            {% else %}
+            <a class="nav-pill" href="{{ url_for('auth.login') }}">Login</a>
+            {% endif %}
+        </div>
     </div>
 
     <!-- BREADCRUMBS -->
@@ -24,7 +34,8 @@
         {% endfor %}
     </div>
 
-    <!-- UPLOAD ISLAND -->
+    <!-- UPLOAD ISLAND — admin only -->
+    {% if admin_mode %}
     <div class="upload-island">
 
         <div class="upload-island-header">
@@ -60,8 +71,9 @@
         </div>
 
     </div>
+    {% endif %}
 
-    <!-- READER BUTTON (image-only folders) -->
+    <!-- READER BUTTON -->
     {% if image_only %}
     <div style="text-align:center; margin-bottom:20px;">
         <a class="reader-button" href="{{ url_for('files.reader', path=current_path) }}">
@@ -77,7 +89,9 @@
         <a class="file-row folder-row" href="{{ url_for('files.browse', path=parent_path) }}">
             <div class="file-main">
                 <div class="thumb folder-thumb">📁</div>
-                <div class="file-info"><div class="file-name">..</div></div>
+                <div class="file-info">
+                    <div class="file-name">..</div>
+                </div>
             </div>
             <div class="file-meta">Parent Folder</div>
         </a>
@@ -86,6 +100,7 @@
         {% for item in items %}
 
         {% if item.type == 'dir' %}
+        <!-- FOLDER -->
         <a class="file-row folder-row" href="{{ url_for('files.browse', path=item.path) }}">
             <div class="file-main">
                 <div class="thumb folder-thumb">📁</div>
@@ -97,8 +112,10 @@
         </a>
 
         {% else %}
+        <!-- FILE -->
         <div class="file-row">
             <div class="file-main">
+
                 {% if item.has_thumbnail %}
                 <img class="thumb"
                      src="{{ url_for('files.thumbnail', file_id=item.file_id) }}"
@@ -109,13 +126,28 @@
                 {% endif %}
 
                 <div class="file-info">
-                    <div class="file-name" title="{{ item.name }}">{{ item.name }}</div>
+                    <!-- File name / inline rename form -->
+                    <div class="file-name" id="fname-{{ item.file_id }}" title="{{ item.name }}">
+                        {{ item.name }}
+                    </div>
+                    {% if admin_mode %}
+                    <form id="rename-form-{{ item.file_id }}"
+                          class="rename-form hidden"
+                          method="POST"
+                          action="{{ url_for('files.rename_file', file_id=item.file_id) }}">
+                        <input type="text" name="name" value="{{ item.name }}" class="rename-input">
+                        <button type="submit" class="admin-btn" title="Save">✓</button>
+                        <button type="button" class="admin-btn"
+                                onclick="cancelRename({{ item.file_id }})" title="Cancel">✕</button>
+                    </form>
+                    {% endif %}
                     <div class="file-meta-mobile">{{ item.size }}</div>
                 </div>
             </div>
 
             <div class="file-meta">{{ item.size }}</div>
 
+            <!-- Standard actions -->
             <div class="file-actions">
                 <a class="action-btn download-btn"
                    href="{{ url_for('files.download_file', file_id=item.file_id) }}">Download</a>
@@ -124,6 +156,21 @@
                    href="{{ url_for('files.stream_page', file_id=item.file_id) }}">Stream</a>
                 {% endif %}
             </div>
+
+            <!-- Admin actions -->
+            {% if admin_mode %}
+            <div class="admin-actions">
+                <button class="admin-btn rename-btn"
+                        onclick="startRename({{ item.file_id }})"
+                        title="Rename">✏</button>
+                <form method="POST"
+                      action="{{ url_for('files.delete_file', file_id=item.file_id) }}"
+                      onsubmit="return confirm('Delete \'{{ item.name }}\'? This cannot be undone.')">
+                    <button type="submit" class="admin-btn delete-btn" title="Delete">🗑</button>
+                </form>
+            </div>
+            {% endif %}
+
         </div>
         {% endif %}
 
@@ -132,8 +179,11 @@
 </div>
 
 <script>
+/* ---------- Upload island ---------- */
 (function () {
-    const dropArea     = document.getElementById('drop-area');
+    const uploadIsland = document.getElementById('drop-area');
+    if (!uploadIsland) return;   // guests don't see the island
+
     const fileInput    = document.getElementById('file-input');
     const folderMode   = document.getElementById('folder-mode');
     const progressWrap = document.getElementById('upload-progress-wrap');
@@ -158,20 +208,20 @@
     });
 
     ['dragenter','dragover','dragleave','drop'].forEach(ev =>
-        dropArea.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); })
+        uploadIsland.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); })
     );
     ['dragenter','dragover'].forEach(ev =>
-        dropArea.addEventListener(ev, () => dropArea.classList.add('dragover'))
+        uploadIsland.addEventListener(ev, () => uploadIsland.classList.add('dragover'))
     );
     ['dragleave','drop'].forEach(ev =>
-        dropArea.addEventListener(ev, () => dropArea.classList.remove('dragover'))
+        uploadIsland.addEventListener(ev, () => uploadIsland.classList.remove('dragover'))
     );
 
-    dropArea.addEventListener('drop', e => {
+    uploadIsland.addEventListener('drop', e => {
         const f = e.dataTransfer.files;
         if (f.length) { fileInput.files = f; startUpload(); }
     });
-    dropArea.addEventListener('click', () => fileInput.click());
+    uploadIsland.addEventListener('click', () => fileInput.click());
     fileInput.addEventListener('change', startUpload);
 
     function startUpload() {
@@ -207,6 +257,22 @@
         xhr.send(fd);
     }
 })();
+
+/* ---------- Inline rename ---------- */
+function startRename(fileId) {
+    const nameEl = document.getElementById('fname-' + fileId);
+    const formEl = document.getElementById('rename-form-' + fileId);
+    nameEl.classList.add('hidden');
+    formEl.classList.remove('hidden');
+    const input = formEl.querySelector('input');
+    input.focus();
+    input.select();
+}
+
+function cancelRename(fileId) {
+    document.getElementById('fname-' + fileId).classList.remove('hidden');
+    document.getElementById('rename-form-' + fileId).classList.add('hidden');
+}
 </script>
 
 </body>
