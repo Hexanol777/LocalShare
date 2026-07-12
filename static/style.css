@@ -1,3 +1,8 @@
+/* 
+LocalShare — global stylesheet
+Base: Lshare dark theme
+*/
+
 *, *::before, *::after { box-sizing: border-box; }
 
 body {
@@ -400,3 +405,312 @@ body {
 
     .header-box { flex-direction: column; gap: 10px; text-align: center; }
 }
+
+
+/* ============================================================
+   LOGIN PAGE
+   ============================================================ */
+
+.login-wrap {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+
+.login-card {
+    background: #1b1f24;
+    border: 1px solid #2c3440;
+    border-radius: 20px;
+    padding: 44px 40px;
+    width: 100%;
+    max-width: 380px;
+    text-align: center;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+}
+
+.login-card h1 {
+    margin: 0 0 6px;
+    font-size: 1.6rem;
+}
+
+.login-subtitle {
+    color: #9aa4b2;
+    margin: 0 0 28px;
+    font-size: 0.875rem;
+}
+
+.login-error {
+    background: rgba(220,60,60,0.12);
+    border: 1px solid rgba(220,60,60,0.4);
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 0.875rem;
+    color: #ff7070;
+    margin-bottom: 18px;
+    text-align: left;
+}
+
+.login-card form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.login-card input[type="password"] {
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px solid #2c3440;
+    background: #111315;
+    color: #e6e6e6;
+    font-size: 1rem;
+    outline: none;
+    transition: border-color 0.15s;
+}
+
+.login-card input[type="password"]:focus {
+    border-color: #59c1ff;
+}
+
+.login-card button[type="submit"] {
+    padding: 12px;
+    border: none;
+    border-radius: 10px;
+    background: #2d6cdf;
+    color: white;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.login-card button[type="submit"]:hover {
+    background: #3a7cff;
+}
+
+.guest-link {
+    display: block;
+    margin-top: 22px;
+    color: #9aa4b2;
+    text-decoration: none;
+    font-size: 0.875rem;
+    transition: color 0.15s;
+}
+
+.guest-link:hover { color: #59c1ff; }
+
+
+/* ============================================================
+   HEADER AUTH ELEMENTS
+   ============================================================ */
+
+.header-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.admin-badge {
+    font-size: 0.78rem;
+    background: rgba(45,108,223,0.15);
+    border: 1px solid rgba(45,108,223,0.4);
+    color: #59c1ff;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+}
+
+.nav-pill-logout {
+    background: rgba(180,40,40,0.15);
+    border: 1px solid rgba(180,40,40,0.35);
+    color: #ff7070;
+}
+
+.nav-pill-logout:hover {
+    background: rgba(180,40,40,0.28);
+    border-color: rgba(220,60,60,0.6);
+}
+
+
+/* ============================================================
+   ADMIN CONTROLS — rename / delete
+   ============================================================ */
+
+.admin-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    opacity: 0.15;
+    transition: opacity 0.15s;
+}
+
+.file-row:hover .admin-actions { opacity: 1; }
+
+.admin-actions form { margin: 0; }
+
+.admin-btn {
+    background: #1b1f24;
+    border: 1px solid #2c3440;
+    border-radius: 7px;
+    color: #9aa4b2;
+    padding: 7px 10px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    line-height: 1;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.admin-btn:hover {
+    background: #232831;
+    color: #e6e6e6;
+    border-color: #3b4656;
+}
+
+.delete-btn:hover {
+    background: rgba(180,40,40,0.18);
+    border-color: rgba(220,60,60,0.55);
+    color: #ff7070;
+}
+
+/* Inline rename form (sits inside .file-info, hidden by default) */
+
+.rename-form {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    margin-top: 2px;
+}
+
+.rename-input {
+    flex: 1;
+    min-width: 0;
+    padding: 5px 10px;
+    border-radius: 7px;
+    border: 1px solid #2c3440;
+    background: #111315;
+    color: #e6e6e6;
+    font-size: 0.9rem;
+    outline: none;
+    transition: border-color 0.15s;
+}
+
+.rename-input:focus { border-color: #59c1ff; }
+
+.hidden { display: none !important; }
+
+/* ============================================================
+   STREAM PAGE
+   ============================================================ */
+
+.topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    background: #1b1f24;
+    border-bottom: 1px solid #2c3440;
+}
+
+.topbar a {
+    color: #59c1ff;
+    text-decoration: none;
+    font-size: 0.9rem;
+}
+.topbar a:hover { text-decoration: underline; }
+
+.topbar-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 50%;
+    text-align: center;
+}
+
+.player-wrap {
+    background: #000;
+    width: 100%;
+}
+
+.player-wrap video {
+    display: block;
+    width: 100%;
+    max-height: 78vh;
+    background: #000;
+}
+
+.stream-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding: 14px 20px;
+    background: #1b1f24;
+    border-bottom: 1px solid #2c3440;
+}
+
+.ctrl-btn {
+    padding: 8px 16px;
+    border-radius: 8px;
+    border: 1px solid #2c3440;
+    background: #232831;
+    color: #e6e6e6;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.ctrl-btn:hover { background: #2c3440; }
+
+.sync-status {
+    font-family: monospace;
+    font-size: 0.875rem;
+    margin-left: auto;
+    color: #9aa4b2;
+}
+
+.latency-badge {
+    font-family: monospace;
+    font-size: 0.8rem;
+    color: #9aa4b2;
+}
+
+.viewer-panel {
+    margin: 20px;
+    padding: 14px 18px;
+    background: #1b1f24;
+    border: 1px solid #2c3440;
+    border-radius: 14px;
+    font-size: 0.85rem;
+}
+
+.viewer-panel h4 {
+    margin: 0 0 10px;
+    font-size: 0.875rem;
+    color: #9aa4b2;
+    font-weight: 600;
+}
+
+.viewer-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.viewer-tag {
+    background: #232831;
+    border: 1px solid #2c3440;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-family: monospace;
+    font-size: 0.78rem;
+    display: flex;
+    gap: 8px;
+}
+
+.viewer-tag .ip   { color: #8bc34a; }
+.viewer-tag .ping { color: #ffb74d; }
