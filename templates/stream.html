@@ -2,305 +2,271 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Stream with Watch Together</title>
-    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-    <style>
-        body {
-            font-family: system-ui, sans-serif;
-            margin: 20px;
-            background: #111;
-            color: #eee;
-        }
-        video { width: 100%; max-height: 80vh; background: black; }
-        .controls { margin-top: 15px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-        button { padding: 8px 16px; font-size: 1rem; cursor: pointer; }
-        .status { font-family: monospace; font-size: 0.9rem; margin-left: auto; }
-        .latency-badge { font-family: monospace; font-size: 0.8rem; color: #aaa; margin-left: 10px; }
-        .viewer-panel { margin-top: 20px; padding: 12px; background: #1a1a2e; border-radius: 8px; font-size: 0.85rem; }
-        .viewer-panel h4 { margin: 0 0 8px 0; font-size: 0.9rem; color: #aaa; }
-        .viewer-list { display: flex; flex-wrap: wrap; gap: 8px; }
-        .viewer-tag { background: #2d2d44; padding: 4px 10px; border-radius: 20px; font-family: monospace; font-size: 0.75rem; }
-        .viewer-tag .ip { color: #8bc34a; }
-        .viewer-tag .ping { color: #ffb74d; }
-    </style>
+    <title>Stream – LocalShare</title>
+
+    <!-- Always local — Flask-SocketIO serves this from its own package -->
+    <script src="/socket.io/socket.io.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-    <video id="videoPlayer" controls width="100%">
+
+<!-- TOP BAR -->
+<div class="topbar">
+    <a href="{{ url_for('files.browse') }}">← Browse</a>
+    <span class="topbar-title">{{ file_name }}</span>
+    <span></span>
+</div>
+
+<!-- PLAYER -->
+<div class="player-wrap">
+    <video id="videoPlayer" controls>
+        {# TS files: mpegts.js attaches the source — no <source> tag needed #}
+        {% if mimetype != 'video/mp2t' %}
         <source src="{{ url_for('files.stream_file', file_id=file_id) }}" type="{{ mimetype }}">
+        {% endif %}
     </video>
-    <div class="controls">
-        <button id="playBtn">▶ Play</button>
-        <button id="pauseBtn">⏸ Pause</button>
-        <button id="syncBtn">🔄 Sync Now</button>
-        <span class="status" id="syncStatus">🟢 Synced</span>
-        <span class="latency-badge" id="latencyInfo"></span>
+</div>
+
+<!-- CONTROLS -->
+<div class="stream-controls">
+    <button class="ctrl-btn" id="playBtn">▶ Play</button>
+    <button class="ctrl-btn" id="pauseBtn">⏸ Pause</button>
+    <button class="ctrl-btn" id="syncBtn">🔄 Sync</button>
+    <span class="sync-status" id="syncStatus">🟢 Synced</span>
+    <span class="latency-badge" id="latencyInfo"></span>
+</div><!-- /.stream-controls -->
+
+<!-- VIEWER PANEL -->
+<div class="viewer-panel" id="viewerPanel" style="display:none;">
+    <h4>👥 Viewers (<span id="viewerCount">0</span>)</h4>
+    <div id="viewerList" class="viewer-list">
+        <span style="color:#555;">Loading...</span>
     </div>
-    <div class="viewer-panel" id="viewerPanel" style="display: none;">
-        <h4>👥 Viewers (<span id="viewerCount">0</span>)</h4>
-        <div id="viewerList" class="viewer-list"><span style="color:#666;">Loading...</span></div>
-    </div>
+</div>
 
-    <script>
-        // --- DOM Elements ---
-        const video = document.getElementById('videoPlayer');
-        const fileId = {{ file_id }};
-        const socket = io();
+<script>
+// ============================================================
+// initPlayer is defined HERE — before the mpegts loader IIFE
+// below can possibly call it. This eliminates the race condition
+// that was causing TS playback to silently fail.
+// ============================================================
+function initPlayer() {
+    const video  = document.getElementById('videoPlayer');
+    const fileId = {{ file_id }};
+    const socket = io();
 
-        // --- Sync State Variables --- 
-        let syncing = false;          // User action in progress
-        let isCorrecting = false;     // Server-driven correction in progress
-        let suppressEvents = false;   // Dedicated flag to prevent feedback loops
-        let lastSeq = -1;
-        let correctionTimeout = null;
-        let seekDebounce = null;
-        let heartbeatInterval = null;
-        let serverTimeOffset = 0;      // Estimated offset between client and server clocks
-        
-        // Configuration Constants
-        const SOFT_DRIFT = 0.35;
-        const HARD_DRIFT_PLAYING = 1.2;   // Less aggressive while playing
-        const HARD_DRIFT_PAUSED = 0.15;   // Very strict when paused
-        const HEARTBEAT_INTERVAL_MS = 4000;
-
-        // --- Core Synchronization Logic ---
-        
-        // Calculate target position with clock drift compensation
-        function getTargetPosition(state) {
-            const localNow = Date.now() / 1000;
-            const syncedServerNow = state.server_now + serverTimeOffset;
-            const elapsed = syncedServerNow - state.updated_at;
-
-            if (state.playing) {
-                // Interpolate forward based on our best estimate of server time
-                return state.position + elapsed;
-            }
-            return state.position;
-        }
-
-        // Adaptive playback rate correction
-        function applyPlaybackRateCorrection(diff) {
-            if (Math.abs(diff) <= SOFT_DRIFT) {
-                if (video.playbackRate !== 1.0) video.playbackRate = 1.0;
-                return;
-            }
-            
-            // Gentle, adaptive correction
-            const maxRateChange = 0.04;
-            let correction = Math.min(Math.abs(diff) * 0.08, maxRateChange);
-            let newRate = diff > 0 ? 1.0 + correction : 1.0 - correction;
-            
-            // Clamp to safe range
-            newRate = Math.min(Math.max(newRate, 0.92), 1.08);
-            
-            if (Math.abs(video.playbackRate - newRate) > 0.005) {
-                video.playbackRate = newRate;
-            }
-        }
-
-        // Apply server state to local video
-        function applyState(state) {
-            // Prevent processing old or out-of-order updates
-            if (state.seq <= lastSeq) return;
-            lastSeq = state.seq;
-
-            if (syncing || isCorrecting) return;
-
-            const target = getTargetPosition(state);
-            const current = video.currentTime;
-            let diff = target - current;
-            
-            // Clamp diff to avoid extreme corrections on seek
-            diff = Math.min(Math.max(diff, -5), 5);
-
-            // Determine correction strategy
-            const isPaused = !state.playing;
-            const hardDriftThreshold = isPaused ? HARD_DRIFT_PAUSED : HARD_DRIFT_PLAYING;
-            
-            let needsHardSeek = Math.abs(diff) > hardDriftThreshold;
-            
-            // Special case: never hard-seek if we're already very close while playing
-            if (!isPaused && Math.abs(diff) < 0.5) needsHardSeek = false;
-
-            if (needsHardSeek) {
-                // HARD CORRECTION: Direct seek
-                suppressEvents = true;
-                isCorrecting = true;
-
-                // Reset suppression when the browser confirms the seek landed,
-                // not on a fixed timer — prevents events leaking through slow seeks.
-                function onHardSeeked() {
-                    video.removeEventListener('seeked', onHardSeeked);
-                    clearTimeout(hardSeekFallback);
-                    isCorrecting = false;
-                    suppressEvents = false;
-                    document.getElementById('syncStatus').innerHTML = '🟢 Synced';
-                }
-                const hardSeekFallback = setTimeout(onHardSeeked, 1500);
-                video.addEventListener('seeked', onHardSeeked);
-
-                video.currentTime = Math.max(0, target);
-                document.getElementById('syncStatus').innerHTML = `🎬 Hard sync (${diff.toFixed(2)}s)`;
-            } 
-            else {
-                // SOFT CORRECTION: Playback rate adjustment
-                applyPlaybackRateCorrection(diff);
-                
-                if (Math.abs(diff) > 0.1) {
-                    document.getElementById('syncStatus').innerHTML = `🎯 Drift ${diff.toFixed(2)}s`;
-                } else if (document.getElementById('syncStatus').innerHTML.includes('Drift')) {
-                    document.getElementById('syncStatus').innerHTML = '🟢 Synced';
-                }
-            }
-
-            // Sync play/pause state — set suppressEvents BEFORE calling play/pause,
-            // otherwise the browser event fires and handlePlay/handlePause re-send
-            // the action to the server, triggering a broadcast loop.
-            if (state.playing && video.paused && !suppressEvents) {
-                suppressEvents = true;
-                video.play()
-                    .catch(e => console.log('autoplay blocked:', e))
-                    .finally(() => setTimeout(() => { suppressEvents = false; }, 80));
-            } else if (!state.playing && !video.paused && !suppressEvents) {
-                suppressEvents = true;
-                video.pause();
-                setTimeout(() => { suppressEvents = false; }, 80);
-            }
-        }
-
-        // --- Clock Synchronization ---
-        socket.on('watch_update', (state) => {
-            // Continuously refine the server time offset using an exponential moving average
-            const localNow = Date.now() / 1000;
-            const rawOffset = state.server_now - localNow;
-            serverTimeOffset = serverTimeOffset * 0.9 + rawOffset * 0.1;
-            
-            // Update latency display (RTT estimation)
-            const latencyMs = Math.round(Math.abs(rawOffset) * 1000 * 2);
-            document.getElementById('latencyInfo').innerHTML = `📡 ${latencyMs}ms`;
-            
-            applyState(state);
+    // ---------- TS: wire up mpegts.js ----------
+    {% if mimetype == 'video/mp2t' %}
+    if (typeof mpegts !== 'undefined' && mpegts.getFeatureList().mseLivePlayback) {
+        const player = mpegts.createPlayer({
+            type:   'mpegts',
+            isLive: false,
+            url:    "{{ url_for('files.stream_file', file_id=file_id) }}"
         });
+        player.attachMediaElement(video);
+        player.load();
+    } else {
+        console.error('mpegts loaded but MSE is unavailable in this browser.');
+    }
+    {% endif %}
 
-        // --- Network Actions (with suppression) ---
-        async function sendAction(action, position = null) {
-            if (syncing || isCorrecting) return;
-            
-            syncing = true;
-            
-            const payload = { action };
-            if (position !== null) payload.position = position;
-            
-            // Include current client-side time for better server-side sync
-            payload.client_time = Date.now() / 1000;
-            
-            try {
-                await fetch(`/watch/action/${fileId}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-            } catch (err) {
-                console.warn('Action error:', err);
+    // ============================================================
+    // WATCH TOGETHER
+    // ============================================================
+
+    let syncing         = false;
+    let isCorrecting    = false;
+    let suppressEvents  = false;
+    let lastSeq         = -1;
+    let seekDebounce    = null;
+    let heartbeatInterval = null;
+    let serverTimeOffset  = 0;
+
+    const SOFT_DRIFT         = 0.35;
+    const HARD_DRIFT_PLAYING = 1.2;
+    const HARD_DRIFT_PAUSED  = 0.15;
+    const HEARTBEAT_MS       = 4000;
+
+    function getTargetPosition(state) {
+        const elapsed = (state.server_now + serverTimeOffset) - state.updated_at;
+        return state.playing ? state.position + elapsed : state.position;
+    }
+
+    function applyPlaybackRateCorrection(diff) {
+        if (Math.abs(diff) <= SOFT_DRIFT) {
+            if (video.playbackRate !== 1.0) video.playbackRate = 1.0;
+            return;
+        }
+        const correction = Math.min(Math.abs(diff) * 0.08, 0.04);
+        let rate = diff > 0 ? 1.0 + correction : 1.0 - correction;
+        rate = Math.min(Math.max(rate, 0.92), 1.08);
+        if (Math.abs(video.playbackRate - rate) > 0.005) video.playbackRate = rate;
+    }
+
+    function applyState(state) {
+        if (state.seq <= lastSeq || syncing || isCorrecting) return;
+        lastSeq = state.seq;
+
+        const target = getTargetPosition(state);
+        const diff   = Math.min(Math.max(target - video.currentTime, -5), 5);
+
+        const hardThreshold = !state.playing ? HARD_DRIFT_PAUSED : HARD_DRIFT_PLAYING;
+        let needsHard = Math.abs(diff) > hardThreshold;
+        if (state.playing && Math.abs(diff) < 0.5) needsHard = false;
+
+        const statusEl = document.getElementById('syncStatus');
+
+        if (needsHard) {
+            suppressEvents = true;
+            isCorrecting   = true;
+
+            function onSeeked() {
+                video.removeEventListener('seeked', onSeeked);
+                clearTimeout(fallback);
+                isCorrecting = suppressEvents = false;
+                statusEl.textContent = '🟢 Synced';
             }
-            
-            syncing = false;
+            const fallback = setTimeout(onSeeked, 1500);
+            video.addEventListener('seeked', onSeeked);
+
+            video.currentTime = Math.max(0, target);
+            statusEl.textContent = `🎬 Hard sync (${diff.toFixed(2)}s)`;
+        } else {
+            applyPlaybackRateCorrection(diff);
+            if (Math.abs(diff) > 0.1) {
+                statusEl.textContent = `🎯 Drift ${diff.toFixed(2)}s`;
+            } else if (statusEl.textContent.includes('Drift')) {
+                statusEl.textContent = '🟢 Synced';
+            }
         }
 
-        // --- Regular Heartbeat (Prevents Silent Drift) ---
-        function startHeartbeat() {
-            if (heartbeatInterval) clearInterval(heartbeatInterval);
-            heartbeatInterval = setInterval(() => {
-                // Don't send heartbeat if we're currently syncing or correcting
-                if (video.paused) return;
-                if (syncing || isCorrecting) return;
-                
-                // Send current position to server to refresh authoritative state
+        if (state.playing && video.paused && !suppressEvents) {
+            suppressEvents = true;
+            video.play()
+                .catch(e => console.log('autoplay blocked:', e))
+                .finally(() => setTimeout(() => { suppressEvents = false; }, 80));
+        } else if (!state.playing && !video.paused && !suppressEvents) {
+            suppressEvents = true;
+            video.pause();
+            setTimeout(() => { suppressEvents = false; }, 80);
+        }
+    }
+
+    // ---------- Socket ----------
+    socket.on('watch_update', (state) => {
+        const rawOffset  = state.server_now - (Date.now() / 1000);
+        serverTimeOffset = serverTimeOffset * 0.9 + rawOffset * 0.1;
+        document.getElementById('latencyInfo').textContent =
+            `📡 ${Math.round(Math.abs(rawOffset) * 2000)}ms`;
+        applyState(state);
+    });
+
+    // ---------- Actions ----------
+    async function sendAction(action, position = null) {
+        if (syncing || isCorrecting) return;
+        syncing = true;
+        const payload = { action, client_time: Date.now() / 1000 };
+        if (position !== null) payload.position = position;
+        try {
+            await fetch(`/watch/action/${fileId}`, {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify(payload)
+            });
+        } catch (err) { console.warn('Action error:', err); }
+        syncing = false;
+    }
+
+    function startHeartbeat() {
+        if (heartbeatInterval) clearInterval(heartbeatInterval);
+        heartbeatInterval = setInterval(() => {
+            if (!video.paused && !syncing && !isCorrecting)
                 sendAction('heartbeat', video.currentTime);
-            }, HEARTBEAT_INTERVAL_MS);
-        }
-        
-        function stopHeartbeat() {
-            if (heartbeatInterval) {
-                clearInterval(heartbeatInterval);
-                heartbeatInterval = null;
+        }, HEARTBEAT_MS);
+    }
+
+    function stopHeartbeat() {
+        clearInterval(heartbeatInterval);
+        heartbeatInterval = null;
+    }
+
+    // ---------- Video events ----------
+    video.addEventListener('play',   () => { if (!suppressEvents) { sendAction('play',  video.currentTime); startHeartbeat(); } });
+    video.addEventListener('pause',  () => { if (!suppressEvents) { sendAction('pause', video.currentTime); stopHeartbeat();  } });
+    video.addEventListener('seeked', () => {
+        if (seekDebounce) clearTimeout(seekDebounce);
+        if (!suppressEvents)
+            seekDebounce = setTimeout(() => sendAction('seek', video.currentTime), 120);
+    });
+
+    // ---------- Manual controls ----------
+    document.getElementById('playBtn').addEventListener('click',  () => { if (!syncing && !isCorrecting) video.play(); });
+    document.getElementById('pauseBtn').addEventListener('click', () => { if (!syncing && !isCorrecting) video.pause(); });
+    document.getElementById('syncBtn').addEventListener('click',  () => {
+        if (syncing || isCorrecting) return;
+        sendAction('seek', video.currentTime);
+        const s = document.getElementById('syncStatus');
+        s.textContent = '🔄 Force sync sent';
+        setTimeout(() => { if (!syncing) s.textContent = '🟢 Synced'; }, 1000);
+    });
+
+    // ---------- Viewer list ----------
+    async function fetchViewers() {
+        try {
+            const data = await (await fetch(`/watch/viewers/${fileId}`)).json();
+            const panel = document.getElementById('viewerPanel');
+            document.getElementById('viewerCount').textContent = data.count;
+            if (data.count > 0) {
+                panel.style.display = 'block';
+                document.getElementById('viewerList').innerHTML = data.viewers.map(v => {
+                    const ip = v.ip.replace('::ffff:', '').replace('::1', 'localhost');
+                    return `<div class="viewer-tag"><span class="ip">${ip}</span><span class="ping">📡 ${v.latency}ms</span></div>`;
+                }).join('');
+            } else {
+                panel.style.display = 'none';
             }
-        }
+        } catch (e) { console.warn('Viewer fetch error:', e); }
+    }
+    setInterval(fetchViewers, 3000);
+    fetchViewers();
 
-        // --- Event Listeners (with suppression) ---
-        function handlePlay() {
-            if (suppressEvents) return;
-            sendAction('play', video.currentTime);
-            startHeartbeat();
-        }
-        
-        function handlePause() {
-            if (suppressEvents) return;
-            sendAction('pause', video.currentTime);
-            stopHeartbeat();
-        }
-        
-        function handleSeek() {
-            if (seekDebounce) clearTimeout(seekDebounce);
-            if (suppressEvents) return;
-            
-            seekDebounce = setTimeout(() => {
-                sendAction('seek', video.currentTime);
-            }, 120);
-        }
+    // ---------- Init ----------
+    socket.emit('join_watch', { file_id: fileId });
+    window.addEventListener('beforeunload', () => {
+        clearInterval(heartbeatInterval);
+        video.playbackRate = 1.0;
+    });
+}
+// ============================================================
+// END initPlayer
+// ============================================================
 
-        video.addEventListener('play', handlePlay);
-        video.addEventListener('pause', handlePause);
-        video.addEventListener('seeked', handleSeek);
-        
-        // --- Manual Controls ---
-        document.getElementById('playBtn').addEventListener('click', () => {
-            if (!syncing && !isCorrecting) video.play();
-        });
-        document.getElementById('pauseBtn').addEventListener('click', () => {
-            if (!syncing && !isCorrecting) video.pause();
-        });
-        document.getElementById('syncBtn').addEventListener('click', async () => {
-            if (syncing || isCorrecting) return;
-            // Force a hard sync by requesting the current server state
-            // and then seeking to it.
-            sendAction('seek', video.currentTime);
-            document.getElementById('syncStatus').innerHTML = '🔄 Force sync sent';
-            setTimeout(() => {
-                if (!syncing) document.getElementById('syncStatus').innerHTML = '🟢 Synced';
-            }, 1000);
-        });
 
-        // --- Periodic Viewer List Refresh (Polling, can be kept as-is) ---
-        async function fetchViewers() {
-            try {
-                const resp = await fetch(`/watch/viewers/${fileId}`);
-                if (!resp.ok) throw new Error();
-                const data = await resp.json();
-                document.getElementById('viewerCount').innerHTML = data.count;
-                const viewerList = document.getElementById('viewerList');
-                const viewerPanel = document.getElementById('viewerPanel');
-                if (data.count > 0) {
-                    viewerPanel.style.display = 'block';
-                    viewerList.innerHTML = data.viewers.map(v => {
-                        const shortIp = v.ip.replace('::ffff:', '').replace('::1', 'localhost');
-                        return `<div class="viewer-tag"><span class="ip">${shortIp}</span><span class="ping">📡 ${v.latency}ms</span></div>`;
-                    }).join('');
-                } else {
-                    viewerPanel.style.display = 'none';
-                }
-            } catch (err) { console.warn('Viewer fetch error:', err); }
-        }
-        setInterval(fetchViewers, 3000);
-        fetchViewers();
+{% if mimetype == 'video/mp2t' %}
+// TS — load mpegts.js first, then initPlayer
+(function () {
+    var LOCAL = "{{ url_for('static', filename='mpegts.min.js') }}";
+    var CDN   = 'https://cdn.jsdelivr.net/npm/mpegts.js/dist/mpegts.min.js';
 
-        // --- Initialization ---
-        socket.emit('join_watch', { file_id: fileId });
-        
-        // Reset playback rate on page unload
-        window.addEventListener('beforeunload', () => {
-            if (heartbeatInterval) clearInterval(heartbeatInterval);
-            video.playbackRate = 1.0;
+    function inject(src, ok, fail) {
+        var s = document.createElement('script');
+        s.src = src; s.onload = ok; s.onerror = fail;
+        document.head.appendChild(s);
+    }
+
+    inject(LOCAL, initPlayer, function () {
+        console.warn('mpegts.js not in /static/ — falling back to CDN');
+        inject(CDN, initPlayer, function () {
+            console.error('mpegts.js failed to load from all sources.');
         });
-    </script>
+    });
+})();
+
+{% else %}
+// Non-TS — native <source> tag handles playback, call initPlayer immediately
+initPlayer();
+{% endif %}
+</script>
+
 </body>
 </html>
