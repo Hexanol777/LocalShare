@@ -4,8 +4,6 @@
     <meta charset="UTF-8">
     <title>Stream – LocalShare</title>
 
-    <!-- Always local — Flask-SocketIO serves this from its own package -->
-    <script src="/socket.io/socket.io.js"></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
@@ -242,30 +240,49 @@ function initPlayer() {
 // ============================================================
 
 
-{% if mimetype == 'video/mp2t' %}
-// TS — load mpegts.js first, then initPlayer
+// ============================================================
+// LOADER CHAIN
+// socket.io must be fully loaded before initPlayer() runs because
+// initPlayer() calls io() on its first line.
+// /socket.io/ is Flask-SocketIO's transport namespace, NOT a static
+// file path — requesting socket.io.js from there returns 400.
+// Use local static file first, CDN as fallback.
+// ============================================================
 (function () {
-    var LOCAL = "{{ url_for('static', filename='mpegts.min.js') }}";
-    var CDN   = 'https://cdn.jsdelivr.net/npm/mpegts.js/dist/mpegts.min.js';
-
     function inject(src, ok, fail) {
         var s = document.createElement('script');
         s.src = src; s.onload = ok; s.onerror = fail;
         document.head.appendChild(s);
     }
 
-    inject(LOCAL, initPlayer, function () {
-        console.warn('mpegts.js not in /static/ — falling back to CDN');
-        inject(CDN, initPlayer, function () {
-            console.error('mpegts.js failed to load from all sources.');
+    var SIO_LOCAL = "{{ url_for('static', filename='socket.io.min.js') }}";
+    var SIO_CDN   = 'https://cdn.socket.io/4.7.5/socket.io.min.js';
+
+    function afterSocketIO() {
+        {% if mimetype == 'video/mp2t' %}
+        // TS: also need mpegts.js before initialising the player
+        var MPEGTS_LOCAL = "{{ url_for('static', filename='mpegts.min.js') }}";
+        var MPEGTS_CDN   = 'https://cdn.jsdelivr.net/npm/mpegts.js/dist/mpegts.min.js';
+
+        inject(MPEGTS_LOCAL, initPlayer, function () {
+            console.warn('mpegts.js not in /static/ — falling back to CDN');
+            inject(MPEGTS_CDN, initPlayer, function () {
+                console.error('mpegts.js failed to load from all sources.');
+            });
+        });
+        {% else %}
+        // Non-TS: socket.io is all we need
+        initPlayer();
+        {% endif %}
+    }
+
+    inject(SIO_LOCAL, afterSocketIO, function () {
+        console.warn('socket.io.min.js not in /static/ — falling back to CDN');
+        inject(SIO_CDN, afterSocketIO, function () {
+            console.error('socket.io failed to load from all sources. Watch Together will not work.');
         });
     });
 })();
-
-{% else %}
-// Non-TS — native <source> tag handles playback, call initPlayer immediately
-initPlayer();
-{% endif %}
 </script>
 
 </body>

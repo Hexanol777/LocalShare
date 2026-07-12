@@ -35,7 +35,10 @@ def watch_action(file_id):
     now        = time.time()
     client_ip  = request.remote_addr or 'unknown'
 
-    update_viewer_info(viewers_data, viewers_lock, file_id, client_ip, data.get('latency', 50))
+    # Compute RTT from client_time (client sends Date.now()/1000). Falls back to 0.
+    client_time = data.get('client_time')
+    latency_ms  = round((now - client_time) * 1000) if client_time else 0
+    update_viewer_info(viewers_data, viewers_lock, file_id, client_ip, latency_ms)
 
     rate_key = f'{client_ip}:{file_id}'
     with client_update_lock:
@@ -119,7 +122,13 @@ def join_watch(data):
         return
 
     join_room(f'watch_{file_id}')
-    now = time.time()
+    now       = time.time()
+    client_ip = request.remote_addr or 'unknown'
+
+    # Register viewer immediately on join so they appear in the panel
+    # even before they interact. Latency starts at 0 and gets refined
+    # by subsequent watch_action calls that carry client_time.
+    update_viewer_info(viewers_data, viewers_lock, file_id, client_ip, 0)
 
     with watch_lock:
         sess = watch_sessions.get(file_id)
