@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login — LocalShare</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<div class="login-wrap">
+    <div class="login-card">
+
+        <h1>LocalShare</h1>
+        <p class="login-subtitle">Administrator Login</p>
+
+        {% if error %}
+        <div class="login-error">{{ error }}</div>
+        {% endif %}
+
+        <form method="POST" autocomplete="off">
+            <input
+                type="password"
+                name="password"
+                placeholder="Master password"
+                autofocus
+                autocomplete="current-password"
+                required>
+            <button type="submit">Login</button>
+        </form>
+
+        <a class="guest-link" href="{{ url_for('files.browse') }}">
+            Continue as guest →
+        </a>
+
+    </div>
+</div>
+
+</body>
+</html>
