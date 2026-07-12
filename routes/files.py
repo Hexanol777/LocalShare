@@ -11,7 +11,7 @@ from werkzeug.utils import secure_filename
 
 from extensions import db
 from models import File
-from utils import human_readable_size, STREAMABLE_EXTENSIONS
+from utils import human_readable_size, STREAMABLE_EXTENSIONS, admin_required
 
 files_bp = Blueprint('files', __name__)
 
@@ -19,7 +19,7 @@ IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp', '.gif'}
 VIDEO_EXTENSIONS = {'.mp4', '.mkv', '.webm', '.ts', '.mov', '.avi', '.m4v'}
 
 THUMBNAIL_DIR = '.thumbnails'
-FFMPEG_PATH = shutil.which('ffmpeg')
+FFMPEG_PATH   = shutil.which('ffmpeg')
 
 try:
     from PIL import Image
@@ -28,22 +28,38 @@ except ImportError:
     PILLOW_AVAILABLE = False
 
 MIME_TYPES = {
+    # Native video
     '.mp4':  'video/mp4',
-    '.mkv':  'video/x-matroska',
     '.webm': 'video/webm',
     '.ogg':  'video/ogg',
+    '.mov':  'video/mp4',
+    # TS — mpegts.js
+    '.ts':   'video/mp2t',
+    # Unsupported video (correct MIME)
+    '.mkv':  'video/x-matroska',
+    '.avi':  'video/x-msvideo',
+    '.wmv':  'video/x-ms-wmv',
+    # Native audio
     '.mp3':  'audio/mpeg',
     '.flac': 'audio/flac',
-    '.ts':   'video/mp2t',
-    '.m4b':  'audio/mp4',
+    '.wav':  'audio/wav',
+    '.aac':  'audio/aac',
     '.m4a':  'audio/mp4',
+    '.m4b':  'audio/mp4',
+    '.opus': 'audio/ogg',
+    '.oga':  'audio/ogg',
 }
+
+# Player routing
+PLAYER_NATIVE_VIDEO = {'.mp4', '.webm', '.ogg', '.mov'}
+PLAYER_TS_VIDEO     = {'.ts'}
+PLAYER_NATIVE_AUDIO = {'.mp3', '.flac', '.wav', '.aac', '.m4a', '.m4b', '.opus', '.oga'}
 
 
 # ---------- Helpers ----------
 
 def is_safe_path(base_dir, rel):
-    base = os.path.realpath(base_dir)
+    base   = os.path.realpath(base_dir)
     target = os.path.realpath(os.path.join(base_dir, rel))
     return target == base or target.startswith(base + os.sep)
 
@@ -53,13 +69,11 @@ def natural_sort_key(s):
 
 
 def _resolve_subpath(subpath):
-    """Normalise a URL subpath to a safe relative string (or '' for root)."""
     p = os.path.normpath(subpath).lstrip('/') if subpath.strip() else ''
     return '' if p == '.' else p
 
 
 def _get_or_register(rel_path, entry_name, entry_size):
-    """Return the DB File for rel_path, creating one if missing."""
     obj = File.query.filter_by(stored_name=rel_path).first()
     if obj is None:
         obj = File(original_name=entry_name, stored_name=rel_path, file_size=entry_size)
@@ -93,9 +107,9 @@ def browse():
     if not os.path.isdir(full_path):
         abort(404)
 
-    items = []
+    items      = []
     image_only = True
-    has_files = False
+    has_files  = False
 
     try:
         entries = sorted(os.scandir(full_path),
@@ -115,8 +129,7 @@ def browse():
             if ext not in IMAGE_EXTENSIONS:
                 image_only = False
 
-            stat = entry.stat()
-            db_file = _get_or_register(rel, entry.name, stat.st_size)
+            db_file = _get_or_register(rel, entry.name, entry.stat().st_size)
 
             items.append({
                 'name':          entry.name,
@@ -134,7 +147,6 @@ def browse():
     if not has_files:
         image_only = False
 
-    # Breadcrumbs
     breadcrumbs = []
     if safe_path:
         cumulative = ''
@@ -155,6 +167,7 @@ def browse():
 
 
 @files_bp.route('/upload', methods=['POST'])
+@admin_required
 def upload_file():
     upload_folder = current_app.config['UPLOAD_FOLDER']
     os.makedirs(upload_folder, exist_ok=True)
@@ -175,7 +188,6 @@ def upload_file():
         if not file or not file.filename:
             continue
 
-        # Preserve folder structure for webkitdirectory uploads
         parts = [secure_filename(p)
                  for p in file.filename.replace('\\', '/').split('/')
                  if p]
@@ -192,10 +204,10 @@ def upload_file():
         file.save(dest)
 
         file_size = os.path.getsize(dest)
-        existing = File.query.filter_by(stored_name=stored_name).first()
+        existing  = File.query.filter_by(stored_name=stored_name).first()
         if existing:
             from datetime import datetime
-            existing.file_size = file_size
+            existing.file_size   = file_size
             existing.upload_time = datetime.utcnow()
         else:
             db.session.add(File(
@@ -206,6 +218,56 @@ def upload_file():
 
     db.session.commit()
     return redirect(url_for('files.browse', path=safe_path))
+
+
+@files_bp.route('/delete/<int:file_id>', methods=['POST'])
+@admin_required
+def delete_file(file_id):
+    file      = File.query.get_or_404(file_id)
+    file_path = os.path.join(current_app.config['UPLOAD_FOLDER'], file.stored_name)
+
+    # Remember which folder to return to before deleting the record
+    folder = '/'.join(file.stored_name.replace('\\', '/').split('/')[:-1])
+
+    if os.path.exists(file_path):
+        os.remove(file_path)
+
+    db.session.delete(file)
+    db.session.commit()
+
+    return redirect(url_for('files.browse', path=folder))
+
+
+@files_bp.route('/rename/<int:file_id>', methods=['POST'])
+@admin_required
+def rename_file(file_id):
+    file     = File.query.get_or_404(file_id)
+    new_name = request.form.get('name', '').strip()
+
+    if not new_name:
+        return redirect(url_for('files.browse'))
+
+    safe_name = secure_filename(new_name)
+    if not safe_name:
+        return redirect(url_for('files.browse'))
+
+    old_path = os.path.join(current_app.config['UPLOAD_FOLDER'], file.stored_name)
+
+    # Preserve subfolder, replace only the filename component
+    parts       = file.stored_name.replace('\\', '/').split('/')
+    parts[-1]   = safe_name
+    new_stored  = '/'.join(parts)
+    new_path    = os.path.join(current_app.config['UPLOAD_FOLDER'], new_stored)
+
+    folder = '/'.join(parts[:-1])
+
+    if os.path.exists(old_path) and not os.path.exists(new_path):
+        os.rename(old_path, new_path)
+        file.original_name = safe_name
+        file.stored_name   = new_stored
+        db.session.commit()
+
+    return redirect(url_for('files.browse', path=folder))
 
 
 @files_bp.route('/download/<int:file_id>')
@@ -219,16 +281,16 @@ def download_file(file_id):
 
 @files_bp.route('/stream/<int:file_id>')
 def stream_file(file_id):
-    file = File.query.get_or_404(file_id)
+    file      = File.query.get_or_404(file_id)
     file_path = os.path.join(current_app.config['UPLOAD_FOLDER'], file.stored_name)
     if not os.path.exists(file_path):
         return 'File not found', 404
 
-    file_size = os.path.getsize(file_path)
-    ext = os.path.splitext(file.original_name)[1].lower()
-    mimetype = MIME_TYPES.get(ext, 'application/octet-stream')
+    file_size        = os.path.getsize(file_path)
+    ext              = os.path.splitext(file.original_name)[1].lower()
+    mimetype         = MIME_TYPES.get(ext, 'application/octet-stream')
     encoded_filename = quote(file.original_name)
-    range_header = request.headers.get('Range')
+    range_header     = request.headers.get('Range')
 
     if not range_header:
         def generate():
@@ -236,8 +298,8 @@ def stream_file(file_id):
                 while chunk := f.read(8192):
                     yield chunk
         resp = Response(generate(), mimetype=mimetype)
-        resp.headers['Content-Length'] = file_size
-        resp.headers['Accept-Ranges'] = 'bytes'
+        resp.headers['Content-Length']      = file_size
+        resp.headers['Accept-Ranges']       = 'bytes'
         resp.headers['Content-Disposition'] = f'inline; filename="{encoded_filename}"'
         return resp
 
@@ -246,7 +308,8 @@ def stream_file(file_id):
         return 'Invalid Range Header', 416
 
     start = int(match.group(1))
-    end = int(match.group(2)) if match.group(2) else file_size - 1
+    end   = int(match.group(2)) if match.group(2) else file_size - 1
+
     if start >= file_size or end >= file_size or start > end:
         return 'Range Not Satisfiable', 416
 
@@ -273,10 +336,25 @@ def stream_file(file_id):
 
 @files_bp.route('/stream_page/<int:file_id>')
 def stream_page(file_id):
-    file = File.query.get_or_404(file_id)
-    ext = os.path.splitext(file.original_name)[1].lower()
+    file     = File.query.get_or_404(file_id)
+    ext      = os.path.splitext(file.original_name)[1].lower()
     mimetype = MIME_TYPES.get(ext, 'application/octet-stream')
-    return render_template('stream.html', file_id=file_id, mimetype=mimetype)
+
+    if ext in PLAYER_NATIVE_VIDEO:
+        player_type = 'video'
+    elif ext in PLAYER_TS_VIDEO:
+        player_type = 'ts'
+    elif ext in PLAYER_NATIVE_AUDIO:
+        player_type = 'audio'
+    else:
+        player_type = 'unsupported'
+
+    return render_template('stream.html',
+                           file_id=file_id,
+                           file_name=file.original_name,
+                           mimetype=mimetype,
+                           player_type=player_type,
+                           ext=ext)
 
 
 @files_bp.route('/thumbnail/<int:file_id>')
@@ -284,8 +362,9 @@ def thumbnail(file_id):
     if not PILLOW_AVAILABLE:
         abort(501)
 
-    file = File.query.get_or_404(file_id)
+    file      = File.query.get_or_404(file_id)
     file_path = os.path.join(current_app.config['UPLOAD_FOLDER'], file.stored_name)
+
     if not os.path.exists(file_path):
         abort(404)
 
@@ -294,7 +373,7 @@ def thumbnail(file_id):
         abort(404)
 
     os.makedirs(THUMBNAIL_DIR, exist_ok=True)
-    stat = os.stat(file_path)
+    stat       = os.stat(file_path)
     thumb_hash = hashlib.md5(f"{file_path}:{stat.st_mtime}".encode()).hexdigest()
     thumb_path = os.path.join(THUMBNAIL_DIR, thumb_hash + '.webp')
 
@@ -305,8 +384,8 @@ def thumbnail(file_id):
         if ext in IMAGE_EXTENSIONS:
             img = Image.open(file_path)
             try:
-                orientation = img.getexif().get(274)
                 rotations = {3: 180, 6: 270, 8: 90}
+                orientation = img.getexif().get(274)
                 if orientation in rotations:
                     img = img.rotate(rotations[orientation], expand=True)
             except Exception:
@@ -333,7 +412,6 @@ def thumbnail(file_id):
                 img = img.convert('RGB')
             img.save(thumb_path, 'WEBP', quality=80)
             os.remove(temp)
-
     except Exception:
         abort(500)
 
@@ -352,7 +430,7 @@ def raw_file(file_id):
 @files_bp.route('/reader')
 def reader():
     upload_folder = current_app.config['UPLOAD_FOLDER']
-    safe_path = _resolve_subpath(request.args.get('path', ''))
+    safe_path     = _resolve_subpath(request.args.get('path', ''))
 
     if safe_path and not is_safe_path(upload_folder, safe_path):
         abort(403)
@@ -368,7 +446,7 @@ def reader():
         ext = os.path.splitext(entry.name)[1].lower()
         if ext not in IMAGE_EXTENSIONS:
             continue
-        rel = (os.path.join(safe_path, entry.name) if safe_path else entry.name).replace('\\', '/')
+        rel     = (os.path.join(safe_path, entry.name) if safe_path else entry.name).replace('\\', '/')
         db_file = _get_or_register(rel, entry.name, entry.stat().st_size)
         images.append({'name': entry.name, 'file_id': db_file.id})
 
