@@ -1,12 +1,47 @@
 import os
 import time
+import functools
 import logging
 from datetime import datetime, timedelta
+
+from flask import request, session, abort
 
 logger = logging.getLogger(__name__)
 
 STREAMABLE_EXTENSIONS = {'.mp4', '.mkv', '.mp3', '.flac', '.webm', '.ogg', '.m4b', '.m4a', '.ts', '.gif'}
 
+
+# ============================================================
+# AUTH
+# ============================================================
+
+def is_admin() -> bool:
+    """
+    Grants admin if the caller is loopback (the host machine itself)
+    OR has a valid signed admin session cookie.
+
+    request.remote_addr reflects the real TCP socket address and cannot be
+    spoofed via X-Forwarded-For unless ProxyFix is explicitly added.
+    Do NOT add ProxyFix unless this app sits behind a trusted reverse proxy.
+    """
+    if request.remote_addr in ('127.0.0.1', '::1'):
+        return True
+    return bool(session.get('is_admin', False))
+
+
+def admin_required(f):
+    """Decorator — aborts 403 if the caller is not an admin."""
+    @functools.wraps(f)
+    def decorated(*args, **kwargs):
+        if not is_admin():
+            abort(403)
+        return f(*args, **kwargs)
+    return decorated
+
+
+# ============================================================
+# HELPERS
+# ============================================================
 
 def human_readable_size(size):
     for unit in ['B', 'KB', 'MB', 'GB']:
@@ -32,21 +67,21 @@ def cleanup_old_files():
     """Must be called within an active Flask application context."""
     from extensions import db
     from models import File, ChatMessage
-    from flask import current_app  # <--- Added current_app
+    from flask import current_app
 
     cutoff = datetime.utcnow() - timedelta(hours=24)
-    
+
     # Only delete files if cleanup is enabled (i.e., using default 'uploads' folder)
     if current_app.config.get('CLEANUP_ENABLED', True):
         old_files = File.query.filter(File.upload_time < cutoff).all()
         upload_folder = current_app.config.get('UPLOAD_FOLDER', 'uploads')
-        
+
         for file in old_files:
             file_path = os.path.join(upload_folder, file.stored_name)
             if os.path.exists(file_path):
                 os.remove(file_path)
             db.session.delete(file)
-            
+
     # Always clean up old chat messages regardless of directory mode
     ChatMessage.query.filter(ChatMessage.timestamp < cutoff).delete()
     db.session.commit()
@@ -85,9 +120,9 @@ def cleanup_rate_limits(client_last_update, client_update_lock):
 
 def start_virtual_mdns(hostname="share", port=80):
     """
-    Spins up a background worker thread to broadcast a custom local domain 
-    alias (e.g., http://share.local:5000) using multicast DNS (mDNS), 
-    tricking local devices into finding this machine without modifying the 
+    Spins up a background worker thread to broadcast a custom local domain
+    alias (e.g., http://share.local:5000) using multicast DNS (mDNS),
+    tricking local devices into finding this machine without modifying the
     host OS computer name.
     """
     # Use raw socket routing through a custom import name to bypass scoped re-import collision
@@ -96,7 +131,7 @@ def start_virtual_mdns(hostname="share", port=80):
     from zeroconf import Zeroconf, ServiceInfo
 
     # Dynamically retrieve the current primary LAN IP address
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)    
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         s.connect(('8.8.8.8', 80))
         local_ip = s.getsockname()[0]
@@ -126,8 +161,8 @@ def start_virtual_mdns(hostname="share", port=80):
     )
 
     # Initialize Zeroconf by strictly binding it to your local IP address interface.
-    # Passing the individual IP inside a list ([local_ip]) works perfectly across ALL 
-    zeroconf_instance = Zeroconf(interfaces=[local_ip])    
+    # Passing the individual IP inside a list ([local_ip]) works perfectly across ALL
+    zeroconf_instance = Zeroconf(interfaces=[local_ip])
 
     logger.info(f"Registering virtual mDNS host mapping: http://{hostname}.local:{port} -> {local_ip}")
     zeroconf_instance.register_service(info)
