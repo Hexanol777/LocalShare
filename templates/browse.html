@@ -16,6 +16,7 @@
         <div class="header-actions">
             {% if admin_mode %}
             <span class="admin-badge">Admin</span>
+            <a class="nav-pill" href="{{ url_for('dashboard.dashboard') }}">Dashboard</a>
             {% endif %}
             <a class="nav-pill" href="{{ url_for('chat.chat') }}">💬 Chat</a>
             {% if admin_mode %}

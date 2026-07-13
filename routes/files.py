@@ -11,7 +11,7 @@ from werkzeug.utils import secure_filename
 
 from extensions import db
 from models import File
-from utils import human_readable_size, STREAMABLE_EXTENSIONS, admin_required
+from utils import human_readable_size, STREAMABLE_EXTENSIONS, admin_required, log_activity
 
 files_bp = Blueprint('files', __name__)
 
@@ -35,7 +35,7 @@ MIME_TYPES = {
     '.mov':  'video/mp4',
     # TS — mpegts.js
     '.ts':   'video/mp2t',
-    # Unsupported video (correct MIME)
+    # Unsupported video (correct MIME, player shows download prompt)
     '.mkv':  'video/x-matroska',
     '.avi':  'video/x-msvideo',
     '.wmv':  'video/x-ms-wmv',
@@ -217,6 +217,7 @@ def upload_file():
             ))
 
     db.session.commit()
+    log_activity(request.remote_addr, 'Upload', safe_path or '/', 'upload_file', 'Success')
     return redirect(url_for('files.browse', path=safe_path))
 
 
@@ -232,6 +233,7 @@ def delete_file(file_id):
     if os.path.exists(file_path):
         os.remove(file_path)
 
+    log_activity(request.remote_addr, 'Delete', file.stored_name, 'delete_file', 'Success')
     db.session.delete(file)
     db.session.commit()
 
@@ -266,6 +268,9 @@ def rename_file(file_id):
         file.original_name = safe_name
         file.stored_name   = new_stored
         db.session.commit()
+        log_activity(request.remote_addr, 'Rename',
+                     f'{old_path.split(os.sep)[-1]} → {safe_name}',
+                     'rename_file', 'Success')
 
     return redirect(url_for('files.browse', path=folder))
 
@@ -276,6 +281,7 @@ def download_file(file_id):
     path = os.path.join(current_app.config['UPLOAD_FOLDER'], file.stored_name)
     if not os.path.exists(path):
         return 'File not found', 404
+    log_activity(request.remote_addr, 'Download', file.stored_name, 'download_file', '200')
     return send_file(path, as_attachment=True, download_name=file.original_name)
 
 

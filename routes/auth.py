@@ -5,7 +5,7 @@ from collections import defaultdict
 from flask import (Blueprint, render_template, request,
                    redirect, url_for, session, current_app)
 
-from utils import is_admin
+from utils import is_admin, log_activity
 
 auth_bp = Blueprint('auth', __name__)
 
@@ -41,27 +41,29 @@ def login():
     error = None
 
     if request.method == 'POST':
-        ip = request.remote_addr
+        ip             = request.remote_addr
+        admin_password = current_app.config['ADMIN_PASSWORD']
 
         if _is_rate_limited(ip):
             error = 'Too many failed attempts — try again in 5 minutes.'
+            log_activity(ip, 'Login', '/login', 'login', 'Rate limited')
         else:
-            password       = request.form.get('password', '')
-            admin_password = current_app.config['ADMIN_PASSWORD']
-
-            # hmac.compare_digest prevents timing-based password inference
+            password = request.form.get('password', '')
             if hmac.compare_digest(password, admin_password):
-                session.permanent   = True   # activates the 30-day lifetime
+                session.permanent   = True
                 session['is_admin'] = True
+                log_activity(ip, 'Login', '/login', 'login', 'Success')
                 return redirect(url_for('files.browse'))
             else:
                 _record_attempt(ip)
                 error = 'Incorrect password.'
+                log_activity(ip, 'Login', '/login', 'login', 'Failed')
 
     return render_template('login.html', error=error)
 
 
 @auth_bp.route('/logout')
 def logout():
+    log_activity(request.remote_addr, 'Logout', '/logout', 'logout', 'Success')
     session.pop('is_admin', None)
     return redirect(url_for('files.browse'))
