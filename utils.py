@@ -3,6 +3,8 @@ import time
 import functools
 import logging
 from datetime import datetime, timedelta
+from collections import deque
+from datetime import datetime, timedelta
 
 from flask import request, session, abort
 
@@ -37,6 +39,25 @@ def admin_required(f):
             abort(403)
         return f(*args, **kwargs)
     return decorated
+
+
+# ============================================================
+# ACTIVITY LOG  (in-memory ring buffer, 100 most recent events)
+# ============================================================
+ 
+activity_log: deque = deque(maxlen=100)
+ 
+ 
+def log_activity(ip: str, action: str, path: str, func: str, result: str) -> None:
+    """Prepend an event to the activity ring buffer (newest first)."""
+    activity_log.appendleft({
+        'time':   int(time.time()),
+        'ip':     ip or 'unknown',
+        'action': action,
+        'path':   path,
+        'func':   func,
+        'result': result,
+    })
 
 
 # ============================================================
