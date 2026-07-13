@@ -78,6 +78,7 @@ socketio.init_app(app, cors_allowed_origins='*', async_mode='threading')
 from routes.files import files_bp
 from routes.chat  import chat_bp
 from routes.auth  import auth_bp
+from routes.dashboard  import dashboard_bp
 from routes.watch import (watch_bp,
                           watch_sessions, watch_lock,
                           viewers_data,   viewers_lock,
@@ -86,6 +87,7 @@ from routes.watch import (watch_bp,
 app.register_blueprint(files_bp)
 app.register_blueprint(chat_bp)
 app.register_blueprint(auth_bp)
+app.register_blueprint(dashboard_bp)
 app.register_blueprint(watch_bp)
 
 # ============================================================
