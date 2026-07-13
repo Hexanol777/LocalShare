@@ -15,6 +15,7 @@
         <h1>Dashboard</h1>
         <div class="header-actions">
             <span class="admin-badge">Admin</span>
+            <a class="nav-pill" href="{{ url_for('dashboard.dashboard') }}">Dashboard</a>
             <a class="nav-pill" href="{{ url_for('files.browse') }}">← Browse</a>
             <a class="nav-pill nav-pill-logout" href="{{ url_for('auth.logout') }}">Logout</a>
         </div>
@@ -24,31 +25,40 @@
     <div class="dash-grid">
 
         <div class="dash-card">
-            <div class="dash-card-label">CPU Usage</div>
-            <div class="dash-card-value" id="cpu-val">—</div>
+            <div class="dash-card-body">
+                <div class="dash-card-label">CPU</div>
+                <div class="dash-card-value" id="cpu-val">—</div>
+                <div class="dash-card-sub">% of total system capacity</div>
+            </div>
             <div class="dash-progress">
                 <div class="dash-fill dash-fill-cpu" id="cpu-bar" style="width:0%"></div>
             </div>
         </div>
 
         <div class="dash-card">
-            <div class="dash-card-label">Memory Used</div>
-            <div class="dash-card-value" id="ram-val">—</div>
-            <div class="dash-card-sub" id="ram-sub"></div>
+            <div class="dash-card-body">
+                <div class="dash-card-label">Memory</div>
+                <div class="dash-card-value" id="ram-val">—</div>
+                <div class="dash-card-sub" id="ram-sub"></div>
+            </div>
             <div class="dash-progress">
                 <div class="dash-fill dash-fill-ram" id="ram-bar" style="width:0%"></div>
             </div>
         </div>
 
         <div class="dash-card">
-            <div class="dash-card-label">Server Uptime</div>
-            <div class="dash-card-value" id="uptime-val">—</div>
+            <div class="dash-card-body">
+                <div class="dash-card-label">Server Uptime</div>
+                <div class="dash-card-value" id="uptime-val">—</div>
+            </div>
         </div>
 
         <div class="dash-card">
-            <div class="dash-card-label">Library Size</div>
-            <div class="dash-card-value" id="storage-val">—</div>
-            <div class="dash-card-sub" id="storage-sub"></div>
+            <div class="dash-card-body">
+                <div class="dash-card-label">Library Size</div>
+                <div class="dash-card-value" id="storage-val">—</div>
+                <div class="dash-card-sub" id="storage-sub"></div>
+            </div>
         </div>
 
     </div>
@@ -59,7 +69,7 @@
         <span class="dash-count" id="viewer-count">0</span>
     </h2>
 
-    <div class="dash-table-wrap">
+    <div class="dash-table-wrap" style="margin-bottom: 32px;">
         <table class="dash-table">
             <thead>
                 <tr>
@@ -69,18 +79,21 @@
                 </tr>
             </thead>
             <tbody id="viewers-tbody">
-                <tr class="dash-empty-row">
-                    <td colspan="3">No active streams</td>
-                </tr>
+                <tr class="dash-empty-row"><td colspan="3">No active streams</td></tr>
             </tbody>
         </table>
     </div>
 
     <!-- ACTIVITY LOG -->
-    <h2 class="dash-section-title" style="margin-top: 32px;">
-        Activity Log
-        <span class="dash-count" id="log-count">0</span>
-    </h2>
+    <div class="dash-section-header">
+        <h2 class="dash-section-title" style="margin:0;">
+            Activity Log
+            <span class="dash-count" id="log-count">0</span>
+        </h2>
+        <a class="action-btn download-btn" href="{{ url_for('dashboard.logs_dump') }}">
+            ⬇ Dump Log
+        </a>
+    </div>
 
     <div class="dash-table-wrap">
         <table class="dash-table">
@@ -95,9 +108,7 @@
                 </tr>
             </thead>
             <tbody id="logs-tbody">
-                <tr class="dash-empty-row">
-                    <td colspan="6">Waiting for events…</td>
-                </tr>
+                <tr class="dash-empty-row"><td colspan="6">Waiting for events…</td></tr>
             </tbody>
         </table>
     </div>
@@ -121,30 +132,48 @@ function timeAgo(ts) {
     return `${Math.floor(m / 60)}h ago`;
 }
 
-function actionClass(action, result) {
-    if (action === 'Login' && result === 'Success') return 'dash-badge-ok';
-    if (action === 'Login') return 'dash-badge-fail';
-    if (action === 'Delete') return 'dash-badge-fail';
+function badgeClass(action, result) {
+    if (action === 'Delete')  return 'dash-badge-fail';
+    if (action === 'Login' && result !== 'Success') return 'dash-badge-fail';
     if (action === 'Download' || action === 'Stream') return 'dash-badge-info';
     return 'dash-badge-ok';
+}
+
+function hrBytes(bytes) {
+    const units = ['B','KB','MB','GB'];
+    let v = bytes;
+    for (const u of units) {
+        if (v < 1024) return `${v.toFixed(v < 10 ? 1 : 0)} ${u}`;
+        v /= 1024;
+    }
+    return `${v.toFixed(1)} TB`;
 }
 
 function update() {
     fetch('/api/stats')
         .then(r => r.json())
         .then(d => {
-            // System
             const sys = d.system;
-            document.getElementById('cpu-val').textContent = `${sys.cpu}%`;
-            document.getElementById('cpu-bar').style.width = `${sys.cpu}%`;
 
-            const used  = (sys.ram_used  / 1073741824).toFixed(1);
-            const total = (sys.ram_total / 1073741824).toFixed(1);
-            const perc  = sys.ram_total > 0 ? ((sys.ram_used / sys.ram_total) * 100).toFixed(1) : 0;
-            document.getElementById('ram-val').textContent  = `${used} GB`;
-            document.getElementById('ram-sub').textContent  = `/ ${total} GB total`;
-            document.getElementById('ram-bar').style.width  = `${perc}%`;
-            document.getElementById('uptime-val').textContent   = formatUptime(sys.uptime);
+            // CPU (LocalShare process, % of total capacity)
+            document.getElementById('cpu-val').textContent = `${sys.cpu}%`;
+            document.getElementById('cpu-bar').style.width = `${Math.min(sys.cpu, 100)}%`;
+
+            // RAM (LocalShare RSS vs system total)
+            const ramUsed  = hrBytes(sys.ram_used);
+            const ramTotal = (sys.ram_total / 1073741824).toFixed(1);
+            const ramPerc  = sys.ram_total > 0
+                ? ((sys.ram_used / sys.ram_total) * 100)
+                : 0;
+
+            document.getElementById('ram-val').textContent = ramUsed;
+            document.getElementById('ram-sub').textContent = `of ${ramTotal} GB system RAM`;
+            // Scale bar: process rarely exceeds 5% of system RAM so multiply for visibility,
+            // but cap at 100% if it ever does.
+            document.getElementById('ram-bar').style.width = `${Math.min(ramPerc, 100).toFixed(2)}%`;
+
+            // Uptime
+            document.getElementById('uptime-val').textContent = formatUptime(sys.uptime);
 
             // Storage
             document.getElementById('storage-val').textContent = d.storage.used_hr;
@@ -153,33 +182,29 @@ function update() {
             // Viewers
             document.getElementById('viewer-count').textContent = d.viewers.length;
             const vBody = document.getElementById('viewers-tbody');
-            if (d.viewers.length === 0) {
-                vBody.innerHTML = '<tr class="dash-empty-row"><td colspan="3">No active streams</td></tr>';
-            } else {
-                vBody.innerHTML = d.viewers.map(v => `
+            vBody.innerHTML = d.viewers.length === 0
+                ? '<tr class="dash-empty-row"><td colspan="3">No active streams</td></tr>'
+                : d.viewers.map(v => `
                     <tr>
                         <td class="dash-mono">${v.ip}</td>
                         <td>#${v.file_id}</td>
                         <td>${v.latency} ms</td>
                     </tr>`).join('');
-            }
 
             // Logs
             document.getElementById('log-count').textContent = d.logs.length;
             const lBody = document.getElementById('logs-tbody');
-            if (d.logs.length === 0) {
-                lBody.innerHTML = '<tr class="dash-empty-row"><td colspan="6">Waiting for events…</td></tr>';
-            } else {
-                lBody.innerHTML = d.logs.map(l => `
+            lBody.innerHTML = d.logs.length === 0
+                ? '<tr class="dash-empty-row"><td colspan="6">Waiting for events…</td></tr>'
+                : d.logs.map(l => `
                     <tr>
                         <td class="dash-muted">${timeAgo(l.time)}</td>
                         <td class="dash-mono">${l.ip}</td>
-                        <td><span class="dash-badge ${actionClass(l.action, l.result)}">${l.action}</span></td>
+                        <td><span class="dash-badge ${badgeClass(l.action, l.result)}">${l.action}</span></td>
                         <td class="dash-path" title="${l.path}">${l.path}</td>
                         <td class="dash-mono dash-muted">${l.func}</td>
                         <td>${l.result}</td>
                     </tr>`).join('');
-            }
         })
         .catch(e => console.error('Stats fetch error:', e));
 }
