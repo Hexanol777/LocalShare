@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard – LocalShare</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<div class="container">
+
+    <!-- HEADER -->
+    <div class="header-box">
+        <h1>Dashboard</h1>
+        <div class="header-actions">
+            <span class="admin-badge">Admin</span>
+            <a class="nav-pill" href="{{ url_for('files.browse') }}">← Browse</a>
+            <a class="nav-pill nav-pill-logout" href="{{ url_for('auth.logout') }}">Logout</a>
+        </div>
+    </div>
+
+    <!-- STAT CARDS -->
+    <div class="dash-grid">
+
+        <div class="dash-card">
+            <div class="dash-card-label">CPU Usage</div>
+            <div class="dash-card-value" id="cpu-val">—</div>
+            <div class="dash-progress">
+                <div class="dash-fill dash-fill-cpu" id="cpu-bar" style="width:0%"></div>
+            </div>
+        </div>
+
+        <div class="dash-card">
+            <div class="dash-card-label">Memory Used</div>
+            <div class="dash-card-value" id="ram-val">—</div>
+            <div class="dash-card-sub" id="ram-sub"></div>
+            <div class="dash-progress">
+                <div class="dash-fill dash-fill-ram" id="ram-bar" style="width:0%"></div>
+            </div>
+        </div>
+
+        <div class="dash-card">
+            <div class="dash-card-label">Server Uptime</div>
+            <div class="dash-card-value" id="uptime-val">—</div>
+        </div>
+
+        <div class="dash-card">
+            <div class="dash-card-label">Library Size</div>
+            <div class="dash-card-value" id="storage-val">—</div>
+            <div class="dash-card-sub" id="storage-sub"></div>
+        </div>
+
+    </div>
+
+    <!-- ACTIVE CONNECTIONS -->
+    <h2 class="dash-section-title">
+        Active Streams
+        <span class="dash-count" id="viewer-count">0</span>
+    </h2>
+
+    <div class="dash-table-wrap">
+        <table class="dash-table">
+            <thead>
+                <tr>
+                    <th>IP Address</th>
+                    <th>File ID</th>
+                    <th>Latency</th>
+                </tr>
+            </thead>
+            <tbody id="viewers-tbody">
+                <tr class="dash-empty-row">
+                    <td colspan="3">No active streams</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- ACTIVITY LOG -->
+    <h2 class="dash-section-title" style="margin-top: 32px;">
+        Activity Log
+        <span class="dash-count" id="log-count">0</span>
+    </h2>
+
+    <div class="dash-table-wrap">
+        <table class="dash-table">
+            <thead>
+                <tr>
+                    <th>Time</th>
+                    <th>IP</th>
+                    <th>Action</th>
+                    <th>Path / File</th>
+                    <th>Handler</th>
+                    <th>Result</th>
+                </tr>
+            </thead>
+            <tbody id="logs-tbody">
+                <tr class="dash-empty-row">
+                    <td colspan="6">Waiting for events…</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+</div>
+
+<script>
+function formatUptime(s) {
+    const d = Math.floor(s / 86400);
+    const h = Math.floor((s % 86400) / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    return `${d}d ${h}h ${m}m`;
+}
+
+function timeAgo(ts) {
+    const s = Math.floor(Date.now() / 1000) - ts;
+    if (s < 5)  return 'Just now';
+    if (s < 60) return `${s}s ago`;
+    const m = Math.floor(s / 60);
+    if (m < 60) return `${m}m ago`;
+    return `${Math.floor(m / 60)}h ago`;
+}
+
+function actionClass(action, result) {
+    if (action === 'Login' && result === 'Success') return 'dash-badge-ok';
+    if (action === 'Login') return 'dash-badge-fail';
+    if (action === 'Delete') return 'dash-badge-fail';
+    if (action === 'Download' || action === 'Stream') return 'dash-badge-info';
+    return 'dash-badge-ok';
+}
+
+function update() {
+    fetch('/api/stats')
+        .then(r => r.json())
+        .then(d => {
+            // System
+            const sys = d.system;
+            document.getElementById('cpu-val').textContent = `${sys.cpu}%`;
+            document.getElementById('cpu-bar').style.width = `${sys.cpu}%`;
+
+            const used  = (sys.ram_used  / 1073741824).toFixed(1);
+            const total = (sys.ram_total / 1073741824).toFixed(1);
+            const perc  = sys.ram_total > 0 ? ((sys.ram_used / sys.ram_total) * 100).toFixed(1) : 0;
+            document.getElementById('ram-val').textContent  = `${used} GB`;
+            document.getElementById('ram-sub').textContent  = `/ ${total} GB total`;
+            document.getElementById('ram-bar').style.width  = `${perc}%`;
+            document.getElementById('uptime-val').textContent   = formatUptime(sys.uptime);
+
+            // Storage
+            document.getElementById('storage-val').textContent = d.storage.used_hr;
+            document.getElementById('storage-sub').textContent = `${d.storage.files} files`;
+
+            // Viewers
+            document.getElementById('viewer-count').textContent = d.viewers.length;
+            const vBody = document.getElementById('viewers-tbody');
+            if (d.viewers.length === 0) {
+                vBody.innerHTML = '<tr class="dash-empty-row"><td colspan="3">No active streams</td></tr>';
+            } else {
+                vBody.innerHTML = d.viewers.map(v => `
+                    <tr>
+                        <td class="dash-mono">${v.ip}</td>
+                        <td>#${v.file_id}</td>
+                        <td>${v.latency} ms</td>
+                    </tr>`).join('');
+            }
+
+            // Logs
+            document.getElementById('log-count').textContent = d.logs.length;
+            const lBody = document.getElementById('logs-tbody');
+            if (d.logs.length === 0) {
+                lBody.innerHTML = '<tr class="dash-empty-row"><td colspan="6">Waiting for events…</td></tr>';
+            } else {
+                lBody.innerHTML = d.logs.map(l => `
+                    <tr>
+                        <td class="dash-muted">${timeAgo(l.time)}</td>
+                        <td class="dash-mono">${l.ip}</td>
+                        <td><span class="dash-badge ${actionClass(l.action, l.result)}">${l.action}</span></td>
+                        <td class="dash-path" title="${l.path}">${l.path}</td>
+                        <td class="dash-mono dash-muted">${l.func}</td>
+                        <td>${l.result}</td>
+                    </tr>`).join('');
+            }
+        })
+        .catch(e => console.error('Stats fetch error:', e));
+}
+
+update();
+setInterval(update, 2000);
+</script>
+
+</body>
+</html>
