@@ -68,6 +68,7 @@ def api_stats():
                         'ip':      ip.replace('::ffff:', ''),
                         'file_id': file_id,
                         'latency': round(info.get('latency', 0), 1),
+                        'device': info.get('device', 'Unknown Device')
                     })
 
     return jsonify({

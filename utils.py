@@ -59,6 +59,14 @@ def log_activity(ip: str, action: str, path: str, func: str, result: str) -> Non
         'result': result,
     })
 
+def get_device_string():
+    """Extract and format a clean device string from the request user agent."""
+    ua = request.user_agent
+    platform = (ua.platform or "Unknown OS").title()
+    browser = (ua.browser or "Browser").title()
+    return f"{platform} - {browser}"
+
+
 
 # ============================================================
 # HELPERS

@@ -65,13 +65,13 @@
             </div>
         </div>
 
+        <!-- DISK STORAGE DASH CARD -->
         <div class="dash-card">
             <div class="dash-card-body">
                 <div class="dash-card-label">Disk Storage</div>
-                <div class="dash-card-value" id="disk-val">—</div> <!-- Changed ID -->
-                <div class="dash-card-sub" id="disk-sub"></div>    <!-- Changed ID -->
+                <div class="dash-card-value" id="disk-val">—</div>
+                <div class="dash-card-sub" id="disk-sub"></div>
             </div>
-            <!-- STORAGE CAPACITY DASH CARD -->
             <div class="dash-progress">
                 <div class="dash-fill" id="disk-bar" style="width:0%; background-color: #22c55e;"></div>
             </div>
@@ -90,12 +90,13 @@
             <thead>
                 <tr>
                     <th>IP Address</th>
+                    <th>Device</th>
                     <th>File ID</th>
                     <th>Latency</th>
                 </tr>
             </thead>
             <tbody id="viewers-tbody">
-                <tr class="dash-empty-row"><td colspan="3">No active streams</td></tr>
+                <tr class="dash-empty-row"><td colspan="4">No active streams</td></tr>
             </tbody>
         </table>
     </div>
@@ -178,14 +179,9 @@ function update() {
             // RAM (LocalShare RSS vs system total)
             const ramUsed  = hrBytes(sys.ram_used);
             const ramTotal = (sys.ram_total / 1073741824).toFixed(1);
-            const ramPerc  = sys.ram_total > 0
-                ? ((sys.ram_used / sys.ram_total) * 100)
-                : 0;
-
+            const ramPerc  = sys.ram_total > 0 ? ((sys.ram_used / sys.ram_total) * 100) : 0;
             document.getElementById('ram-val').textContent = ramUsed;
             document.getElementById('ram-sub').textContent = `of ${ramTotal} GB system RAM`;
-            // Scale bar: process rarely exceeds 5% of system RAM so multiply for visibility,
-            // but cap at 100% if it ever does.
             document.getElementById('ram-bar').style.width = `${Math.min(ramPerc, 100).toFixed(2)}%`;
 
             // Uptime
@@ -195,7 +191,7 @@ function update() {
             document.getElementById('storage-val').textContent = d.storage.used_hr;
             document.getElementById('storage-sub').textContent = `${d.storage.files} files`;
 
-            // Disk Capatity
+            // Disk Capacity
             document.getElementById('disk-val').textContent = `${d.storage.free_hr} free`;
             document.getElementById('disk-sub').textContent = `of ${d.storage.total_hr} total disk`;
             document.getElementById('disk-bar').style.width = `${d.storage.percent}%`;
@@ -204,10 +200,11 @@ function update() {
             document.getElementById('viewer-count').textContent = d.viewers.length;
             const vBody = document.getElementById('viewers-tbody');
             vBody.innerHTML = d.viewers.length === 0
-                ? '<tr class="dash-empty-row"><td colspan="3">No active streams</td></tr>'
+                ? '<tr class="dash-empty-row"><td colspan="4">No active streams</td></tr>'
                 : d.viewers.map(v => `
                     <tr>
                         <td class="dash-mono">${v.ip}</td>
+                        <td style="color: #94a3b8; font-weight: 500;">${v.device}</td> <!-- Added dynamic device mapping -->
                         <td>#${v.file_id}</td>
                         <td>${v.latency} ms</td>
                     </tr>`).join('');
@@ -231,7 +228,7 @@ function update() {
 }
 
 update();
-setInterval(update, 2000);
+setInterval(update, 5000);
 </script>
 
 </body>
