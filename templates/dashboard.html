@@ -24,6 +24,7 @@
     <!-- STAT CARDS -->
     <div class="dash-grid">
 
+        <!-- CPU DASH CARD -->
         <div class="dash-card">
             <div class="dash-card-body">
                 <div class="dash-card-label">CPU</div>
@@ -35,6 +36,7 @@
             </div>
         </div>
 
+        <!-- MEMORY DASH CARD -->
         <div class="dash-card">
             <div class="dash-card-body">
                 <div class="dash-card-label">Memory</div>
@@ -46,6 +48,7 @@
             </div>
         </div>
 
+        <!-- UPTIME DASH CARD -->
         <div class="dash-card">
             <div class="dash-card-body">
                 <div class="dash-card-label">Server Uptime</div>
@@ -53,11 +56,24 @@
             </div>
         </div>
 
+        <!-- ROOT FOLDER DASH CARD -->
         <div class="dash-card">
             <div class="dash-card-body">
                 <div class="dash-card-label">Library Size</div>
                 <div class="dash-card-value" id="storage-val">—</div>
                 <div class="dash-card-sub" id="storage-sub"></div>
+            </div>
+        </div>
+
+        <div class="dash-card">
+            <div class="dash-card-body">
+                <div class="dash-card-label">Disk Storage</div>
+                <div class="dash-card-value" id="disk-val">—</div> <!-- Changed ID -->
+                <div class="dash-card-sub" id="disk-sub"></div>    <!-- Changed ID -->
+            </div>
+            <!-- STORAGE CAPACITY DASH CARD -->
+            <div class="dash-progress">
+                <div class="dash-fill" id="disk-bar" style="width:0%; background-color: #22c55e;"></div>
             </div>
         </div>
 
@@ -178,6 +194,11 @@ function update() {
             // Storage
             document.getElementById('storage-val').textContent = d.storage.used_hr;
             document.getElementById('storage-sub').textContent = `${d.storage.files} files`;
+
+            // Disk Capatity
+            document.getElementById('disk-val').textContent = `${d.storage.free_hr} free`;
+            document.getElementById('disk-sub').textContent = `of ${d.storage.total_hr} total disk`;
+            document.getElementById('disk-bar').style.width = `${d.storage.percent}%`;
 
             // Viewers
             document.getElementById('viewer-count').textContent = d.viewers.length;

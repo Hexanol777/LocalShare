@@ -33,7 +33,8 @@ def api_stats():
     ram_proc  = _proc.memory_info().rss
     ram_total = psutil.virtual_memory().total   # system total for context/bar
 
-    uptime = time.time() - psutil.boot_time()
+
+    uptime = time.time() - _proc.create_time()
 
     # --- Storage: walk UPLOAD_FOLDER ---
     upload_folder = current_app.config['UPLOAD_FOLDER']
@@ -46,6 +47,15 @@ def api_stats():
                 file_count += 1
             except OSError:
                 pass
+
+    # --- Get hard drive storage metrics for the drive containing uploads
+    try:
+        disk_info = psutil.disk_usage(upload_folder)
+        disk_total = disk_info.total
+        disk_free = disk_info.free
+        disk_percent = disk_info.percent
+    except OSError:
+        disk_total = disk_free = disk_percent = 0
 
     # --- Active viewers (last seen within 30 s) ---
     now         = time.time()
@@ -70,6 +80,9 @@ def api_stats():
         'storage': {
             'used_hr': human_readable_size(total_size),
             'files':   file_count,
+            'free_hr': human_readable_size(disk_free),
+            'total_hr': human_readable_size(disk_total),
+            'percent': disk_percent,
         },
         'viewers': viewer_list,
         'logs':    list(activity_log),
