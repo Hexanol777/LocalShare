@@ -59,14 +59,32 @@ def log_activity(ip: str, action: str, path: str, func: str, result: str) -> Non
         'result': result,
     })
 
+import re
 def get_device_string():
-    """Extract and format a clean device string from the request user agent."""
-    ua = request.user_agent
-    platform = (ua.platform or "Unknown OS").title()
-    browser = (ua.browser or "Browser").title()
-    return f"{platform} - {browser}"
+    """
+    Extract and format a clean device string by parsing the raw 
+    User-Agent header directly, bypassing Werkzeug's broken parser.
+    """
+def get_device_string():
+    ua = request.headers.get('User-Agent', '')
+    if not ua: return "Unknown Device"
 
+    # OS Detection + Version
+    if m := re.search(r'Windows NT (\d+\.\d+)', ua):      os_str = f"Windows {m.group(1)}"
+    elif m := re.search(r'iPhone OS ([\d_]+)', ua):       os_str = f"iOS {m.group(1).replace('_', '.')}"
+    elif m := re.search(r'Mac OS X ([\d_]+)', ua):        os_str = f"macOS {m.group(1).replace('_', '.')}"
+    elif m := re.search(r'Android ([\d.]+)', ua):         os_str = f"Android {m.group(1)}"
+    else: os_str = "Linux" # If it's not the above, it's virtually always Linux/Unix
 
+    # Browser Detection + Version
+    if m := re.search(r'Edg/(\d+\.\d+)', ua):            browser_str = f"Edge {m.group(1)}"
+    elif m := re.search(r'OPR/(\d+\.\d+)', ua):           browser_str = f"Opera {m.group(1)}"
+    elif m := re.search(r'Chrome/(\d+\.\d+)', ua):        browser_str = f"Chrome {m.group(1)}"
+    elif m := re.search(r'Firefox/(\d+\.\d+)', ua):       browser_str = f"Firefox {m.group(1)}"
+    elif m := re.search(r'Version/(\d+\.\d+)', ua):       browser_str = f"Safari {m.group(1)}"
+    else: browser_str = "Browser"
+
+    return f"{os_str} - {browser_str}"
 
 # ============================================================
 # HELPERS

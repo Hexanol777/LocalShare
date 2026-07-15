@@ -6,7 +6,7 @@ from flask import Blueprint, request
 from flask_socketio import join_room, emit
 
 from extensions import socketio
-from utils import update_viewer_info,  get_device_string
+from utils import update_viewer_info, get_device_string
 
 watch_bp = Blueprint('watch', __name__)
 
@@ -23,7 +23,6 @@ RATE_LIMIT_SECONDS  = 0.5
 # --- Viewer tracking ---
 viewers_data  = defaultdict(dict)
 viewers_lock  = threading.Lock()
-
 
 @watch_bp.route('/watch/action/<int:file_id>', methods=['POST'])
 def watch_action(file_id):
