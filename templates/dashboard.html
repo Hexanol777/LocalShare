@@ -79,6 +79,38 @@
 
     </div>
 
+    <!-- NETWORK TRAFFIC -->
+    <h2 class="dash-section-title">Network Traffic</h2>
+
+    <div class="net-panel">
+
+        <div class="net-rates">
+            <div class="net-rate-card">
+                <div class="net-rate-icon net-arrow-down">&#8595;</div>
+                <div class="net-rate-body">
+                    <div class="dash-card-label">Download</div>
+                    <div class="dash-card-value net-rate-value" id="net-down-val">—</div>
+                </div>
+            </div>
+            <div class="net-rate-card">
+                <div class="net-rate-icon net-arrow-up">&#8593;</div>
+                <div class="net-rate-body">
+                    <div class="dash-card-label">Upload</div>
+                    <div class="dash-card-value net-rate-value" id="net-up-val">—</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="net-chart-wrap">
+            <svg id="net-chart" class="net-chart" viewBox="0 0 600 120" preserveAspectRatio="none"></svg>
+            <div class="net-chart-legend">
+                <span class="net-legend-item"><span class="net-legend-dot net-legend-down"></span>Download</span>
+                <span class="net-legend-item"><span class="net-legend-dot net-legend-up"></span>Upload</span>
+            </div>
+        </div>
+
+    </div>
+
     <!-- ACTIVE CONNECTIONS -->
     <h2 class="dash-section-title">
         Active Streams
@@ -166,6 +198,46 @@ function hrBytes(bytes) {
     return `${v.toFixed(1)} TB`;
 }
 
+function hrBitrate(bytesPerSec) {
+    return `${hrBytes(bytesPerSec)}/s`;
+}
+
+/* ---------- Network sparkline ---------- */
+const NET_CHART_W = 600;
+const NET_CHART_H = 120;
+const NET_CHART_PAD = 6;
+
+function buildPolyline(history, key, maxVal) {
+    if (history.length < 2) return '';
+    const stepX = (NET_CHART_W) / (history.length - 1);
+    return history.map((sample, i) => {
+        const x = i * stepX;
+        const ratio = maxVal > 0 ? sample[key] / maxVal : 0;
+        const y = NET_CHART_H - NET_CHART_PAD - (ratio * (NET_CHART_H - NET_CHART_PAD * 2));
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(' ');
+}
+
+function renderNetChart(history) {
+    const svg = document.getElementById('net-chart');
+    if (!history.length) { svg.innerHTML = ''; return; }
+
+    const maxVal = Math.max(1, ...history.map(s => Math.max(s.up, s.down)));
+    const downPoints = buildPolyline(history, 'down', maxVal);
+    const upPoints    = buildPolyline(history, 'up', maxVal);
+
+    // Filled area under the download line for depth, matching accent color
+    const downArea = downPoints
+        ? `${downPoints} ${NET_CHART_W},${NET_CHART_H} 0,${NET_CHART_H}`
+        : '';
+
+    svg.innerHTML = `
+        ${downArea ? `<polygon points="${downArea}" fill="rgba(89,193,255,0.10)"></polygon>` : ''}
+        <polyline points="${downPoints}" class="net-line net-line-down"></polyline>
+        <polyline points="${upPoints}" class="net-line net-line-up"></polyline>
+    `;
+}
+
 function update() {
     fetch('/api/stats')
         .then(r => r.json())
@@ -195,6 +267,11 @@ function update() {
             document.getElementById('disk-val').textContent = `${d.storage.free_hr} free`;
             document.getElementById('disk-sub').textContent = `of ${d.storage.total_hr} total disk`;
             document.getElementById('disk-bar').style.width = `${d.storage.percent}%`;
+
+            // Network
+            document.getElementById('net-down-val').textContent = hrBitrate(d.network.download_bps);
+            document.getElementById('net-up-val').textContent   = hrBitrate(d.network.upload_bps);
+            renderNetChart(d.network.history);
 
             // Viewers
             document.getElementById('viewer-count').textContent = d.viewers.length;
@@ -228,7 +305,7 @@ function update() {
 }
 
 update();
-setInterval(update, 5000);
+setInterval(update, 4000);
 </script>
 
 </body>

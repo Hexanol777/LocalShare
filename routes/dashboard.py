@@ -1,6 +1,7 @@
 import os
 import time
 import psutil
+from collections import deque
 
 from flask import Blueprint, render_template, jsonify, make_response, current_app
 
@@ -11,6 +12,15 @@ dashboard_bp = Blueprint('dashboard', __name__)
 
 # Grab handle to current process once at startup — avoids repeated PID lookups
 _proc = psutil.Process()
+
+# --- Network throughput tracking ---
+# psutil.net_io_counters() returns cumulative byte counters, so we diff
+# against the previous poll to get an instantaneous rate. System-wide
+# (not per-process) since there's no reliable per-process network
+# counter cross-platform.
+_net_last_counters = psutil.net_io_counters()
+_net_last_time     = time.time()
+_net_history        = deque(maxlen=30)   # ~2.5 min of samples at 4s poll interval
 
 
 @dashboard_bp.route('/dashboard')
@@ -57,6 +67,25 @@ def api_stats():
     except OSError:
         disk_total = disk_free = disk_percent = 0
 
+    # --- Network throughput (system-wide, rate since last poll) ---
+    global _net_last_counters, _net_last_time
+
+    net_now      = psutil.net_io_counters()
+    net_now_time = time.time()
+    net_dt       = max(net_now_time - _net_last_time, 0.001)
+
+    upload_bps   = max((net_now.bytes_sent - _net_last_counters.bytes_sent) / net_dt, 0)
+    download_bps = max((net_now.bytes_recv - _net_last_counters.bytes_recv) / net_dt, 0)
+
+    _net_last_counters = net_now
+    _net_last_time     = net_now_time
+
+    _net_history.append({
+        't':    int(net_now_time),
+        'up':   round(upload_bps),
+        'down': round(download_bps),
+    })
+
     # --- Active viewers (last seen within 30 s) ---
     now         = time.time()
     viewer_list = []
@@ -84,6 +113,11 @@ def api_stats():
             'free_hr': human_readable_size(disk_free),
             'total_hr': human_readable_size(disk_total),
             'percent': disk_percent,
+        },
+        'network': {
+            'upload_bps':   round(upload_bps),
+            'download_bps': round(download_bps),
+            'history':      list(_net_history),
         },
         'viewers': viewer_list,
         'logs':    list(activity_log),
