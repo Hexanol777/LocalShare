@@ -206,36 +206,73 @@ function hrBitrate(bytesPerSec) {
 const NET_CHART_W = 600;
 const NET_CHART_H = 120;
 const NET_CHART_PAD = 6;
+let netChartInitialized = false;
 
-function buildPolyline(history, key, maxVal) {
-    if (history.length < 2) return '';
-    const stepX = (NET_CHART_W) / (history.length - 1);
+function getPoints(history, key, maxVal) {
+    const stepX = NET_CHART_W / (history.length - 1);
     return history.map((sample, i) => {
         const x = i * stepX;
         const ratio = maxVal > 0 ? sample[key] / maxVal : 0;
         const y = NET_CHART_H - NET_CHART_PAD - (ratio * (NET_CHART_H - NET_CHART_PAD * 2));
-        return `${x.toFixed(1)},${y.toFixed(1)}`;
-    }).join(' ');
+        return [x, y];
+    });
+}
+
+// Catmull-Rom -> cubic Bezier conversion so the line flows through every
+// point smoothly instead of the sharp zig-zag a straight polyline gives.
+function smoothPath(points) {
+    if (points.length < 2) return '';
+    if (points.length === 2) {
+        return `M ${points[0][0]},${points[0][1]} L ${points[1][0]},${points[1][1]}`;
+    }
+    let d = `M ${points[0][0]},${points[0][1]}`;
+    for (let i = 0; i < points.length - 1; i++) {
+        const p0 = points[i - 1] || points[i];
+        const p1 = points[i];
+        const p2 = points[i + 1];
+        const p3 = points[i + 2] || p2;
+
+        const cp1x = p1[0] + (p2[0] - p0[0]) / 6;
+        const cp1y = p1[1] + (p2[1] - p0[1]) / 6;
+        const cp2x = p2[0] - (p3[0] - p1[0]) / 6;
+        const cp2y = p2[1] - (p3[1] - p1[1]) / 6;
+
+        d += ` C ${cp1x.toFixed(1)},${cp1y.toFixed(1)} ${cp2x.toFixed(1)},${cp2y.toFixed(1)} ${p2[0].toFixed(1)},${p2[1].toFixed(1)}`;
+    }
+    return d;
+}
+
+function smoothAreaPath(points) {
+    const line = smoothPath(points);
+    if (!line) return '';
+    const last  = points[points.length - 1];
+    const first = points[0];
+    return `${line} L ${last[0]},${NET_CHART_H} L ${first[0]},${NET_CHART_H} Z`;
+}
+
+function ensureNetChartElements(svg) {
+    svg.innerHTML = `
+        <path id="net-area-down" class="net-area net-area-down"></path>
+        <path id="net-path-down" class="net-line net-line-down"></path>
+        <path id="net-path-up" class="net-line net-line-up"></path>
+    `;
+    netChartInitialized = true;
 }
 
 function renderNetChart(history) {
     const svg = document.getElementById('net-chart');
-    if (!history.length) { svg.innerHTML = ''; return; }
+    if (!history.length) { svg.innerHTML = ''; netChartInitialized = false; return; }
+    if (!netChartInitialized) ensureNetChartElements(svg);
 
     const maxVal = Math.max(1, ...history.map(s => Math.max(s.up, s.down)));
-    const downPoints = buildPolyline(history, 'down', maxVal);
-    const upPoints    = buildPolyline(history, 'up', maxVal);
+    const downPoints = getPoints(history, 'down', maxVal);
+    const upPoints    = getPoints(history, 'up', maxVal);
 
-    // Filled area under the download line for depth, matching accent color
-    const downArea = downPoints
-        ? `${downPoints} ${NET_CHART_W},${NET_CHART_H} 0,${NET_CHART_H}`
-        : '';
-
-    svg.innerHTML = `
-        ${downArea ? `<polygon points="${downArea}" fill="rgba(89,193,255,0.10)"></polygon>` : ''}
-        <polyline points="${downPoints}" class="net-line net-line-down"></polyline>
-        <polyline points="${upPoints}" class="net-line net-line-up"></polyline>
-    `;
+    // Updating 'd' on an existing <path> (rather than replacing innerHTML)
+    // lets the CSS transition on net-line/net-area animate between shapes.
+    document.getElementById('net-area-down').setAttribute('d', smoothAreaPath(downPoints));
+    document.getElementById('net-path-down').setAttribute('d', smoothPath(downPoints));
+    document.getElementById('net-path-up').setAttribute('d', smoothPath(upPoints));
 }
 
 function update() {

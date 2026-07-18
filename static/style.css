@@ -957,12 +957,28 @@ body {
 .net-line {
     fill: none;
     stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
     vector-effect: non-scaling-stroke;
-    transition: points 0.4s ease;
+    transition: d 0.6s ease-out;
 }
 
-.net-line-down { stroke: #59c1ff; }
-.net-line-up   { stroke: #f59e0b; }
+.net-line-down {
+    stroke: #59c1ff;
+    filter: drop-shadow(0 0 3px rgba(89,193,255,0.6));
+}
+
+.net-line-up {
+    stroke: #f59e0b;
+    filter: drop-shadow(0 0 3px rgba(245,158,11,0.6));
+}
+
+.net-area {
+    stroke: none;
+    transition: d 0.6s ease-out;
+}
+
+.net-area-down { fill: rgba(89,193,255,0.10); }
 
 .net-chart-legend {
     display: flex;
