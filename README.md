@@ -134,3 +134,9 @@ When running in default mode (no directory argument), files older than 24 hours 
 | Thumbnails | Pillow, ffmpeg |
 
 ---
+## Technical Architecture
+
+LocalShare utilizes an event-driven synchronization engine to keep media playback perfectly aligned across all local network clients.
+the exact lifecycle of client actions, state transitions, rate-limiting rules, and WebSocket broadcasts can be seen in the sequence diagram below:
+
+![LocalShare Sequence Diagram](./docs/LocalShare%20-%20WatchTogether.png)
