@@ -61,7 +61,6 @@
         body.ui-hidden .bottom-bar { transform: translateY(100%); opacity: 0; }
 
         /* ---------- TOP BAR CONTENT ---------- */
-        /* 1. Back Button with defining shadow box */
         .top-bar a.back-btn {
             color: var(--text-main);
             text-decoration: none;
@@ -92,7 +91,6 @@
             padding: 0 16px;
             overflow: hidden;
         }
-        /* 2. Folder title truncated to single line */
         .top-bar .title { 
             font-weight: 600; 
             font-size: 0.95rem; 
@@ -106,7 +104,6 @@
             margin-top: 2px; 
         }
 
-        /* Spacer to keep title centered relative to back button */
         .top-bar-spacer {
             width: 36px;
             flex-shrink: 0;
@@ -123,7 +120,6 @@
             font-weight: 500;
         }
 
-        /* 3. Redesigned Slider Track Railing & Knob */
         input[type="range"] {
             -webkit-appearance: none;
             appearance: none;
@@ -291,11 +287,9 @@
 
     <!-- OVERLAYS -->
     <div class="ui-overlay top-bar">
-        <!-- Back Button Box -->
         <a href="{{ url_for('files.browse', path=folder) }}" class="back-btn" title="Back">←</a>
         
         <div class="title-box">
-            <!-- Display only immediate folder name -->
             {% set folder_display = (folder.replace('\\', '/').split('/') | reject('equalto', '') | list)[-1] if folder else 'Root' %}
             <div class="title">{{ folder_display }}</div>
             <div class="progress-text" id="topbar-progress">1 / {{ images|length }}</div>
@@ -360,6 +354,7 @@
     let mode = localStorage.getItem(STORAGE_KEY) || 'ltr';
     let currentIndex = 0;
     let uiVisible = true;
+    let sliderAnimFrame = null;
     
     // DOM Elements
     const readerContainer = document.getElementById('reader-container');
@@ -399,21 +394,63 @@
         });
     });
 
-    // ---------------- NAVIGATION & SLIDER TRACK ----------------
-    function updateControls() {
-        pageSlider.value = currentIndex;
+    // ---------------- NAVIGATION & ANIMATED SLIDER ----------------
+    function updateControls(animate = true) {
         pageCurrent.textContent = currentIndex + 1;
         topbarProgress.textContent = `${currentIndex + 1} / ${imagesData.length}`;
-        updateSliderRailFill();
+        
+        if (animate) {
+            animateSliderTo(currentIndex);
+        } else {
+            if (sliderAnimFrame) cancelAnimationFrame(sliderAnimFrame);
+            pageSlider.value = currentIndex;
+            updateSliderRailFill();
+        }
     }
 
     function updateSliderRailFill() {
-        const min = parseInt(pageSlider.min) || 0;
-        const max = parseInt(pageSlider.max) || 1;
-        const val = parseInt(pageSlider.value);
+        const min = parseFloat(pageSlider.min) || 0;
+        const max = parseFloat(pageSlider.max) || 1;
+        const val = parseFloat(pageSlider.value);
         const percent = max > min ? ((val - min) / (max - min)) * 100 : 0;
         
         pageSlider.style.background = `linear-gradient(to right, var(--accent) 0%, var(--accent) ${percent}%, var(--rail-bg) ${percent}%, var(--rail-bg) 100%)`;
+    }
+
+    function animateSliderTo(targetVal) {
+        if (sliderAnimFrame) cancelAnimationFrame(sliderAnimFrame);
+        
+        const startVal = parseFloat(pageSlider.value);
+        const diff = targetVal - startVal;
+        
+        if (Math.abs(diff) < 0.02) {
+            pageSlider.value = targetVal;
+            updateSliderRailFill();
+            return;
+        }
+
+        const startTime = performance.now();
+        const duration = 220; // 220ms smooth ease-out
+
+        function step(currentTime) {
+            const elapsed = currentTime - startTime;
+            const progress = Math.min(elapsed / duration, 1);
+            
+            // Cubic ease-out
+            const ease = 1 - Math.pow(1 - progress, 3);
+            
+            pageSlider.value = startVal + (diff * ease);
+            updateSliderRailFill();
+
+            if (progress < 1) {
+                sliderAnimFrame = requestAnimationFrame(step);
+            } else {
+                pageSlider.value = targetVal;
+                updateSliderRailFill();
+            }
+        }
+
+        sliderAnimFrame = requestAnimationFrame(step);
     }
 
     function navigate(direction) {
@@ -426,24 +463,30 @@
             if (mode.startsWith('vertical')) {
                 scrollToVerticalPage(currentIndex);
             } else {
-                renderView();
+                renderView(true);
             }
         }
     }
 
+    // Manual slider drag -> instant responsiveness without animation lag
     pageSlider.addEventListener('input', (e) => {
+        if (sliderAnimFrame) cancelAnimationFrame(sliderAnimFrame);
+        
         currentIndex = parseInt(e.target.value);
+        pageCurrent.textContent = currentIndex + 1;
+        topbarProgress.textContent = `${currentIndex + 1} / ${imagesData.length}`;
         updateSliderRailFill();
+        
         if (mode.startsWith('vertical')) {
             scrollToVerticalPage(currentIndex);
         } else {
-            renderView();
+            renderView(false);
         }
     });
 
     // ---------------- CORE RENDER & PRELOAD ----------------
-    function renderView() {
-        updateControls();
+    function renderView(animateSlider = true) {
+        updateControls(animateSlider);
 
         if (mode.startsWith('vertical')) {
             if (readerContainer.className !== `reader-${mode}`) {
@@ -552,14 +595,14 @@
             
             if (closestIdx !== currentIndex) {
                 currentIndex = closestIdx;
-                updateControls();
+                updateControls(true);
                 loadVerticalImages();
             }
         });
     });
 
     // Init
-    renderView();
+    renderView(false);
     setTimeout(() => { if (uiVisible) toggleUI(); }, 2500);
 </script>
 </body>
