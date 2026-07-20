@@ -884,6 +884,16 @@ body {
     margin-bottom: 14px;
 }
 
+.dash-header-actions {
+    display: flex;
+    gap: 10px;
+}
+
+.dash-header-actions .action-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+
 /* ============================================================
    NETWORK TRAFFIC
    ============================================================ */
