@@ -423,6 +423,24 @@ def thumbnail(file_id):
 
     return send_file(thumb_path, mimetype='image/webp')
 
+# Placement not decided
+@files_bp.route('/api/thumbnails/clear', methods=['POST'])
+@admin_required
+def clear_thumbnails():
+    """Delete all cached thumbnails. They regenerate lazily on next view."""
+    cleared = 0
+    if os.path.isdir(THUMBNAIL_DIR):
+        for fname in os.listdir(THUMBNAIL_DIR):
+            try:
+                os.remove(os.path.join(THUMBNAIL_DIR, fname))
+                cleared += 1
+            except OSError:
+                pass
+
+    log_activity(request.remote_addr, 'Clear Thumbnails', THUMBNAIL_DIR,
+                 'clear_thumbnails', f'{cleared} removed')
+    return {'status': 'ok', 'cleared': cleared}
+
 
 @files_bp.route('/raw/<int:file_id>')
 def raw_file(file_id):
