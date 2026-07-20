@@ -7,18 +7,19 @@
     <style>
         :root {
             --bg-color: #000;
-            --overlay-bg: rgba(27, 31, 36, 0.95);
+            --overlay-bg: rgba(20, 24, 29, 0.94);
             --accent: #59c1ff;
             --text-main: #e6e6e6;
             --text-muted: #9aa4b2;
             --border-color: #2c3440;
+            --rail-bg: #2a313d;
         }
 
         body {
             margin: 0;
             background: var(--bg-color);
             color: var(--text-main);
-            font-family: system-ui, sans-serif;
+            font-family: system-ui, -apple-system, sans-serif;
             overflow-x: hidden;
             -webkit-tap-highlight-color: transparent;
         }
@@ -31,8 +32,8 @@
             background: var(--overlay-bg);
             z-index: 100;
             transition: transform 0.25s ease, opacity 0.25s ease;
-            backdrop-filter: blur(8px);
-            -webkit-backdrop-filter: blur(8px);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
         }
 
         .top-bar {
@@ -41,16 +42,18 @@
             align-items: center;
             justify-content: space-between;
             padding: 12px 16px;
-            border-bottom: 1px solid var(--border-color);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
         }
 
         .bottom-bar {
             bottom: 0;
             display: flex;
             flex-direction: column;
-            padding: 12px 16px 24px;
-            border-top: 1px solid var(--border-color);
-            gap: 16px;
+            padding: 14px 18px 22px;
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.4);
+            gap: 14px;
         }
 
         /* Hide logic */
@@ -58,54 +61,115 @@
         body.ui-hidden .bottom-bar { transform: translateY(100%); opacity: 0; }
 
         /* ---------- TOP BAR CONTENT ---------- */
+        /* 1. Back Button with defining shadow box */
         .top-bar a.back-btn {
             color: var(--text-main);
             text-decoration: none;
-            font-size: 1.2rem;
+            font-size: 1.1rem;
             display: flex;
             align-items: center;
-            gap: 8px;
+            justify-content: center;
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+            transition: background 0.2s, border-color 0.2s, transform 0.15s;
+            flex-shrink: 0;
         }
+        .top-bar a.back-btn:hover {
+            background: rgba(255, 255, 255, 0.15);
+            border-color: rgba(255, 255, 255, 0.25);
+        }
+        .top-bar a.back-btn:active {
+            transform: scale(0.95);
+        }
+
         .top-bar .title-box {
             text-align: center;
             flex: 1;
             padding: 0 16px;
+            overflow: hidden;
         }
-        .top-bar .title { font-weight: 600; font-size: 0.95rem; }
-        .top-bar .progress-text { font-size: 0.8rem; color: var(--text-muted); margin-top: 2px; }
+        /* 2. Folder title truncated to single line */
+        .top-bar .title { 
+            font-weight: 600; 
+            font-size: 0.95rem; 
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .top-bar .progress-text { 
+            font-size: 0.8rem; 
+            color: var(--text-muted); 
+            margin-top: 2px; 
+        }
 
-        /* ---------- BOTTOM BAR CONTENT ---------- */
+        /* Spacer to keep title centered relative to back button */
+        .top-bar-spacer {
+            width: 36px;
+            flex-shrink: 0;
+        }
+
+        /* ---------- BOTTOM BAR & SLIDER ---------- */
         .slider-row {
             display: flex;
             align-items: center;
-            gap: 12px;
+            gap: 14px;
             font-variant-numeric: tabular-nums;
             font-size: 0.85rem;
             color: var(--text-muted);
+            font-weight: 500;
         }
 
+        /* 3. Redesigned Slider Track Railing & Knob */
         input[type="range"] {
             -webkit-appearance: none;
+            appearance: none;
             flex: 1;
-            background: transparent;
-            height: 24px;
+            height: 6px;
+            border-radius: 3px;
+            outline: none;
+            background: var(--rail-bg);
+            box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6);
+            cursor: pointer;
+            margin: 0;
         }
+
+        /* Webkit Thumb (Chrome/Safari/Edge) */
         input[type="range"]::-webkit-slider-thumb {
             -webkit-appearance: none;
-            height: 16px;
-            width: 16px;
+            appearance: none;
+            height: 18px;
+            width: 18px;
             border-radius: 50%;
-            background: var(--accent);
+            background: #ffffff;
             cursor: pointer;
-            margin-top: -6px;
-            box-shadow: 0 0 10px rgba(89, 193, 255, 0.4);
+            box-shadow: 0 0 0 2px var(--accent), 0 2px 6px rgba(0, 0, 0, 0.5);
+            transition: transform 0.15s ease, box-shadow 0.15s ease;
         }
-        input[type="range"]::-webkit-slider-runnable-track {
-            width: 100%;
-            height: 4px;
+        input[type="range"]::-webkit-slider-thumb:hover,
+        input[type="range"]::-webkit-slider-thumb:active {
+            transform: scale(1.2);
+            box-shadow: 0 0 0 3px var(--accent), 0 0 12px rgba(89, 193, 255, 0.6);
+        }
+
+        /* Firefox Thumb */
+        input[type="range"]::-moz-range-thumb {
+            height: 18px;
+            width: 18px;
+            border-radius: 50%;
+            background: #ffffff;
+            border: none;
             cursor: pointer;
-            background: var(--border-color);
-            border-radius: 2px;
+            box-shadow: 0 0 0 2px var(--accent), 0 2px 6px rgba(0, 0, 0, 0.5);
+            transition: transform 0.15s ease, box-shadow 0.15s ease;
+        }
+        input[type="range"]::-moz-range-thumb:hover,
+        input[type="range"]::-moz-range-thumb:active {
+            transform: scale(1.2);
+            box-shadow: 0 0 0 3px var(--accent), 0 0 12px rgba(89, 193, 255, 0.6);
         }
 
         .toolbar {
@@ -126,7 +190,7 @@
             transition: color 0.2s;
         }
         .tool-btn:hover { color: var(--accent); }
-        .tool-btn svg { width: 22px; height: 22px; fill: currentColor; }
+        .tool-btn svg { width: 20px; height: 20px; fill: currentColor; }
 
         /* ---------- READER MODES ---------- */
         #reader-container {
@@ -154,7 +218,7 @@
         
         .vert-page-wrapper {
             width: 100%;
-            min-height: 50vh; /* Prevents extreme layout shifts before images load */
+            min-height: 50vh;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -221,19 +285,23 @@
             border-color: var(--accent);
             color: var(--accent);
         }
-
     </style>
 </head>
 <body class="ui-visible">
 
     <!-- OVERLAYS -->
     <div class="ui-overlay top-bar">
-        <a href="{{ url_for('files.browse', path=folder) }}" class="back-btn">←</a>
+        <!-- Back Button Box -->
+        <a href="{{ url_for('files.browse', path=folder) }}" class="back-btn" title="Back">←</a>
+        
         <div class="title-box">
-            <div class="title">{{ folder or 'Root' }}</div>
+            <!-- Display only immediate folder name -->
+            {% set folder_display = (folder.replace('\\', '/').split('/') | reject('equalto', '') | list)[-1] if folder else 'Root' %}
+            <div class="title">{{ folder_display }}</div>
             <div class="progress-text" id="topbar-progress">1 / {{ images|length }}</div>
         </div>
-        <div style="width: 24px;"></div> <!-- Spacer for flex alignment -->
+
+        <div class="top-bar-spacer"></div>
     </div>
 
     <div class="ui-overlay bottom-bar">
@@ -331,11 +399,21 @@
         });
     });
 
-    // ---------------- NAVIGATION LOGIC ----------------
+    // ---------------- NAVIGATION & SLIDER TRACK ----------------
     function updateControls() {
         pageSlider.value = currentIndex;
         pageCurrent.textContent = currentIndex + 1;
         topbarProgress.textContent = `${currentIndex + 1} / ${imagesData.length}`;
+        updateSliderRailFill();
+    }
+
+    function updateSliderRailFill() {
+        const min = parseInt(pageSlider.min) || 0;
+        const max = parseInt(pageSlider.max) || 1;
+        const val = parseInt(pageSlider.value);
+        const percent = max > min ? ((val - min) / (max - min)) * 100 : 0;
+        
+        pageSlider.style.background = `linear-gradient(to right, var(--accent) 0%, var(--accent) ${percent}%, var(--rail-bg) ${percent}%, var(--rail-bg) 100%)`;
     }
 
     function navigate(direction) {
@@ -355,6 +433,7 @@
 
     pageSlider.addEventListener('input', (e) => {
         currentIndex = parseInt(e.target.value);
+        updateSliderRailFill();
         if (mode.startsWith('vertical')) {
             scrollToVerticalPage(currentIndex);
         } else {
@@ -367,7 +446,6 @@
         updateControls();
 
         if (mode.startsWith('vertical')) {
-            // Setup DOM structure for vertical scrolling if not present
             if (readerContainer.className !== `reader-${mode}`) {
                 readerContainer.className = `reader-${mode}`;
                 readerContainer.innerHTML = '';
@@ -387,7 +465,6 @@
                 loadVerticalImages();
             }
         } else {
-            // Paged LTR or RTL
             readerContainer.className = 'reader-paged';
             readerContainer.innerHTML = '';
             
@@ -399,7 +476,7 @@
         }
     }
 
-    // Load strict window of images (1 behind, 3 ahead)
+    // Dynamic preloading (-1 behind, +3 ahead)
     function loadVerticalImages() {
         for (let i = 0; i < imagesData.length; i++) {
             if (i >= currentIndex - 1 && i <= currentIndex + 3) {
@@ -410,7 +487,6 @@
     }
 
     function preloadPagedImages() {
-        // Keeps references so the browser caches them
         window._preloads = window._preloads || [];
         window._preloads.length = 0; 
         
@@ -425,7 +501,7 @@
 
     function scrollToVerticalPage(index) {
         currentIndex = index;
-        loadVerticalImages(); // Ensure the target image has a src
+        loadVerticalImages();
         setTimeout(() => {
             const target = document.getElementById(`page-wrapper-${index}`);
             if (target) target.scrollIntoView({ behavior: 'auto' });
@@ -433,8 +509,6 @@
     }
 
     // ---------------- EVENT LISTENERS ----------------
-    
-    // Tap Zones
     readerContainer.addEventListener('click', (e) => {
         if (mode.startsWith('vertical')) {
             toggleUI();
@@ -453,14 +527,12 @@
         }
     });
 
-    // Keyboard controls
     document.addEventListener('keydown', e => {
         if (mode.startsWith('vertical')) return; 
         if (e.key === 'ArrowRight') navigate(mode === 'ltr' ? 1 : -1);
         if (e.key === 'ArrowLeft')  navigate(mode === 'ltr' ? -1 : 1);
     });
 
-    // Track scroll to update current index and lazy load ahead
     let scrollTimeout;
     window.addEventListener('scroll', () => {
         if (!mode.startsWith('vertical')) return;
@@ -488,9 +560,7 @@
 
     // Init
     renderView();
-    // Auto-hide UI after 2.5 seconds on initial load to match mobile reader conventions
     setTimeout(() => { if (uiVisible) toggleUI(); }, 2500);
-
 </script>
 </body>
 </html>
