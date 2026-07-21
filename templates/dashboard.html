@@ -140,6 +140,9 @@
             <span class="dash-count" id="log-count">0</span>
         </h2>
         <div class="dash-header-actions">
+            <button class="action-btn" id="clear-thumbs-btn" onclick="clearThumbnails()">
+                🗑 Clear Thumbnails
+            </button>
             <a class="action-btn download-btn" href="{{ url_for('dashboard.logs_dump') }}">
                 ⬇ Dump Log
             </a>
@@ -235,6 +238,17 @@
 
     </div>
 
+</div>
+
+<!-- CUSTOM CONFIRM MODAL -->
+<div id="ls-modal-backdrop" class="ls-modal-backdrop" style="display:none;">
+    <div class="ls-modal">
+        <p class="ls-modal-msg" id="ls-modal-msg"></p>
+        <div class="ls-modal-actions">
+            <button class="ops-btn ops-btn-secondary" id="ls-modal-cancel">Cancel</button>
+            <button class="ops-btn ops-btn-primary"   id="ls-modal-ok">OK</button>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -432,6 +446,28 @@ function update() {
         .catch(e => console.error('Stats fetch error:', e));
 }
 
+// ---------- Custom confirm modal ----------
+function opsConfirm(message) {
+    return new Promise(resolve => {
+        const backdrop = document.getElementById('ls-modal-backdrop');
+        document.getElementById('ls-modal-msg').textContent = message;
+        backdrop.style.display = 'flex';
+
+        function finish(result) {
+            backdrop.style.display = 'none';
+            okBtn.removeEventListener('click', onOk);
+            cancelBtn.removeEventListener('click', onCancel);
+            resolve(result);
+        }
+        const okBtn     = document.getElementById('ls-modal-ok');
+        const cancelBtn = document.getElementById('ls-modal-cancel');
+        function onOk()     { finish(true);  }
+        function onCancel() { finish(false); }
+        okBtn.addEventListener('click', onOk);
+        cancelBtn.addEventListener('click', onCancel);
+    });
+}
+
 // ---------- Ops action dispatcher ----------
 const OPS_CONFIG = {
     thumbs:  { url: '/admin/api/clear-thumbnails', btn: 'ops-btn-thumbs',  label: 'Purge Cache',   confirm: 'Purge all cached thumbnails? They regenerate automatically on next view.' },
@@ -442,7 +478,7 @@ const OPS_CONFIG = {
 
 async function opsAction(key) {
     const cfg = OPS_CONFIG[key];
-    if (!confirm(cfg.confirm)) return;
+    if (!await opsConfirm(cfg.confirm)) return;
 
     const btn = document.getElementById(cfg.btn);
     btn.disabled    = true;
@@ -482,7 +518,7 @@ async function opsAction(key) {
 }
 
 async function clearThumbnails() {
-    if (!confirm('Clear all cached thumbnails? They will regenerate automatically next time each file is viewed.')) return;
+    if (!await opsConfirm('Clear all cached thumbnails? They will regenerate automatically next time each file is viewed.')) return;
 
     const btn = document.getElementById('clear-thumbs-btn');
     const originalText = btn.textContent;
@@ -505,7 +541,7 @@ async function clearThumbnails() {
 }
 
 update();
-setInterval(update, 4000);
+setInterval(update, 5000);
 </script>
 
 </body>
