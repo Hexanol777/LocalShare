@@ -139,9 +139,11 @@
             Activity Log
             <span class="dash-count" id="log-count">0</span>
         </h2>
-        <a class="action-btn download-btn" href="{{ url_for('dashboard.logs_dump') }}">
-            ⬇ Dump Log
-        </a>
+        <div class="dash-header-actions">
+            <a class="action-btn download-btn" href="{{ url_for('dashboard.logs_dump') }}">
+                ⬇ Dump Log
+            </a>
+        </div>
     </div>
 
     <div class="dash-table-wrap">
@@ -160,6 +162,77 @@
                 <tr class="dash-empty-row"><td colspan="6">Waiting for events…</td></tr>
             </tbody>
         </table>
+    </div>
+
+    <!-- SYSTEM OPERATIONS -->
+    <h2 class="dash-section-title" style="margin-top: 36px;">System Operations</h2>
+
+    <div class="ops-grid">
+
+        <!-- CARD 1: Thumbnail Cache -->
+        <div class="ops-card">
+            <div class="ops-card-top">
+                <div>
+                    <div class="ops-card-title">Thumbnail Cache</div>
+                    <div class="ops-card-metric" id="ops-thumb-size">—</div>
+                    <div class="ops-card-sub" id="ops-thumb-count">— files cached</div>
+                </div>
+                <div class="ops-card-icon">🖼</div>
+            </div>
+            <div class="ops-card-footer">
+                <button class="ops-btn ops-btn-warn" id="ops-btn-thumbs"
+                        onclick="opsAction('thumbs')">Purge Cache</button>
+            </div>
+        </div>
+
+        <!-- CARD 2: Activity Buffer -->
+        <div class="ops-card">
+            <div class="ops-card-top">
+                <div>
+                    <div class="ops-card-title">Activity Buffer</div>
+                    <div class="ops-card-metric" id="ops-log-count">—</div>
+                    <div class="ops-card-sub">Buffer: Deque Ring (max 100)</div>
+                </div>
+                <div class="ops-card-icon">📋</div>
+            </div>
+            <div class="ops-card-footer">
+                <button class="ops-btn ops-btn-secondary" id="ops-btn-logs"
+                        onclick="opsAction('logs')">Flush Logs</button>
+            </div>
+        </div>
+
+        <!-- CARD 3: Upload Directory -->
+        <div class="ops-card">
+            <div class="ops-card-top">
+                <div>
+                    <div class="ops-card-title">Upload Directory</div>
+                    <div class="ops-card-metric" id="ops-orphan-status">—</div>
+                    <div class="ops-card-sub" id="ops-orphan-sub">Checking…</div>
+                </div>
+                <div class="ops-card-icon">📁</div>
+            </div>
+            <div class="ops-card-footer">
+                <button class="ops-btn ops-btn-primary" id="ops-btn-orphans"
+                        onclick="opsAction('orphans')">Scan &amp; Clean</button>
+            </div>
+        </div>
+
+        <!-- CARD 4: Sync Sessions -->
+        <div class="ops-card">
+            <div class="ops-card-top">
+                <div>
+                    <div class="ops-card-title">Sync Sessions</div>
+                    <div class="ops-card-metric" id="ops-room-count">—</div>
+                    <div class="ops-card-sub" id="ops-peer-count">— connected peers</div>
+                </div>
+                <div class="ops-card-icon">📡</div>
+            </div>
+            <div class="ops-card-footer">
+                <button class="ops-btn ops-btn-danger" id="ops-btn-rooms"
+                        onclick="opsAction('rooms')">Reset Rooms</button>
+            </div>
+        </div>
+
     </div>
 
 </div>
@@ -337,8 +410,98 @@ function update() {
                         <td class="dash-mono dash-muted">${l.func}</td>
                         <td>${l.result}</td>
                     </tr>`).join('');
+
+            // Ops cards — only update fields that aren't mid-action
+            const ops = d.ops;
+            if (!document.getElementById('ops-btn-thumbs').disabled) {
+                document.getElementById('ops-thumb-size').textContent  = ops.thumb_size_hr;
+                document.getElementById('ops-thumb-count').textContent = `${ops.thumb_count} file${ops.thumb_count !== 1 ? 's' : ''} cached`;
+            }
+            if (!document.getElementById('ops-btn-logs').disabled) {
+                document.getElementById('ops-log-count').textContent = `${ops.log_count} entr${ops.log_count !== 1 ? 'ies' : 'y'}`;
+            }
+            if (!document.getElementById('ops-btn-orphans').disabled) {
+                document.getElementById('ops-orphan-status').textContent = ops.orphan_count === 0 ? 'In Sync' : `${ops.orphan_count} orphan${ops.orphan_count !== 1 ? 's' : ''}`;
+                document.getElementById('ops-orphan-sub').textContent    = ops.orphan_count === 0 ? 'No untracked files found' : 'Untracked files detected';
+            }
+            if (!document.getElementById('ops-btn-rooms').disabled) {
+                document.getElementById('ops-room-count').textContent = `${ops.room_count} active room${ops.room_count !== 1 ? 's' : ''}`;
+                document.getElementById('ops-peer-count').textContent = `${ops.peer_count} connected peer${ops.peer_count !== 1 ? 's' : ''}`;
+            }
         })
         .catch(e => console.error('Stats fetch error:', e));
+}
+
+// ---------- Ops action dispatcher ----------
+const OPS_CONFIG = {
+    thumbs:  { url: '/admin/api/clear-thumbnails', btn: 'ops-btn-thumbs',  label: 'Purge Cache',   confirm: 'Purge all cached thumbnails? They regenerate automatically on next view.' },
+    logs:    { url: '/admin/api/flush-logs',        btn: 'ops-btn-logs',    label: 'Flush Logs',    confirm: 'Flush the entire activity log? This cannot be undone.' },
+    orphans: { url: '/admin/api/clean-orphans',     btn: 'ops-btn-orphans', label: 'Scan & Clean',  confirm: 'Scan for orphaned files and permanently delete them?' },
+    rooms:   { url: '/admin/api/reset-rooms',       btn: 'ops-btn-rooms',   label: 'Reset Rooms',   confirm: 'Reset all active Watch Together rooms? Connected viewers will need to resync.' },
+};
+
+async function opsAction(key) {
+    const cfg = OPS_CONFIG[key];
+    if (!confirm(cfg.confirm)) return;
+
+    const btn = document.getElementById(cfg.btn);
+    btn.disabled    = true;
+    btn.textContent = 'Working…';
+
+    try {
+        const res  = await fetch(cfg.url, { method: 'POST' });
+        const data = await res.json();
+
+        if (data.status === 'skipped') {
+            btn.textContent = '— N/A';
+        } else {
+            btn.textContent = '✓ Done';
+            // Immediately reflect the zeroed-out state without waiting for next poll
+            if (key === 'thumbs') {
+                document.getElementById('ops-thumb-size').textContent  = data.thumb_size_hr;
+                document.getElementById('ops-thumb-count').textContent = '0 files cached';
+            } else if (key === 'logs') {
+                document.getElementById('ops-log-count').textContent = '1 entry';
+            } else if (key === 'orphans') {
+                document.getElementById('ops-orphan-status').textContent = 'In Sync';
+                document.getElementById('ops-orphan-sub').textContent    = 'No untracked files found';
+            } else if (key === 'rooms') {
+                document.getElementById('ops-room-count').textContent = '0 active rooms';
+                document.getElementById('ops-peer-count').textContent = '0 connected peers';
+            }
+        }
+    } catch (e) {
+        console.error('Ops action error:', e);
+        btn.textContent = '✕ Failed';
+    } finally {
+        setTimeout(() => {
+            btn.textContent = cfg.label;
+            btn.disabled    = false;
+        }, 2500);
+    }
+}
+
+async function clearThumbnails() {
+    if (!confirm('Clear all cached thumbnails? They will regenerate automatically next time each file is viewed.')) return;
+
+    const btn = document.getElementById('clear-thumbs-btn');
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Clearing…';
+
+    try {
+        const res  = await fetch('/api/thumbnails/clear', { method: 'POST' });
+        const data = await res.json();
+        btn.textContent = `✓ Cleared ${data.cleared}`;
+    } catch (e) {
+        console.error('Clear thumbnails error:', e);
+        btn.textContent = '✕ Failed';
+    } finally {
+        setTimeout(() => {
+            btn.textContent = originalText;
+            btn.disabled = false;
+        }, 2000);
+    }
 }
 
 update();

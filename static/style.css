@@ -288,6 +288,9 @@ body {
 .download-btn            { background: #2d7d46; color: white; }
 .download-btn:hover      { background: #389956; }
 
+.dash-header-actions .download-btn       { background: rgba(89,193,255,0.12); color: #59c1ff; border: 1px solid rgba(89,193,255,0.25); }
+.dash-header-actions .download-btn:hover { background: rgba(89,193,255,0.20); }
+
 .stream-btn              { background: #2d6cdf; color: white; }
 .stream-btn:hover        { background: #3a7cff; }
 
@@ -1013,3 +1016,91 @@ body {
 
 .net-legend-down { background: #59c1ff; }
 .net-legend-up   { background: #f59e0b; }
+
+/* ============================================================
+   SYSTEM OPERATIONS
+   ============================================================ */
+
+.ops-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 40px;
+}
+
+.ops-card {
+    background: #1b1f24;
+    border: 1px solid #2c3440;
+    border-radius: 14px;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-height: 148px;
+}
+
+.ops-card-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+.ops-card-icon {
+    font-size: 1.5rem;
+    flex-shrink: 0;
+    opacity: 0.55;
+    margin-top: 2px;
+}
+
+.ops-card-title {
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #9aa4b2;
+    margin-bottom: 6px;
+}
+
+.ops-card-metric {
+    font-size: 1.35rem;
+    font-weight: 700;
+    color: #e2e8f0;
+    margin-bottom: 3px;
+    line-height: 1.2;
+}
+
+.ops-card-sub {
+    font-size: 0.78rem;
+    color: #5a6478;
+}
+
+.ops-card-footer {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 18px;
+}
+
+/* Base ops button */
+.ops-btn {
+    border: none;
+    border-radius: 8px;
+    padding: 7px 14px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s, filter 0.15s;
+}
+
+.ops-btn:hover:not(:disabled)  { filter: brightness(1.15); }
+.ops-btn:disabled               { opacity: 0.45; cursor: default; filter: none; }
+
+/* Variants */
+.ops-btn-warn      { background: rgba(89,193,255,0.12); color: #59c1ff; border: 1px solid rgba(89,193,255,0.25); }
+.ops-btn-secondary { background: rgba(89,193,255,0.12); color: #59c1ff; border: 1px solid rgba(89,193,255,0.25); }
+.ops-btn-primary   { background: rgba(89,193,255,0.12); color: #59c1ff; border: 1px solid rgba(89,193,255,0.25); }
+.ops-btn-danger    { background: rgba(89,193,255,0.12); color: #59c1ff; border: 1px solid rgba(89,193,255,0.25); }
+
+@media (max-width: 600px) {
+    .ops-grid { grid-template-columns: 1fr; }
+}

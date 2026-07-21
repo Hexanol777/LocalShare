@@ -3,10 +3,10 @@ import time
 import psutil
 from collections import deque
 
-from flask import Blueprint, render_template, jsonify, make_response, current_app
+from flask import Blueprint, render_template, jsonify, make_response, current_app, request
 
-from utils import admin_required, human_readable_size, activity_log
-from routes.watch import viewers_data, viewers_lock
+from utils import admin_required, human_readable_size, activity_log, log_activity
+from routes.watch import viewers_data, viewers_lock, watch_sessions, watch_lock
 
 dashboard_bp = Blueprint('dashboard', __name__)
 
@@ -100,11 +100,42 @@ def api_stats():
                         'device': info.get('device', 'Unknown Device')
                     })
 
+    # --- Ops-card metrics (lightweight; computed every poll) ---
+    from routes.files import THUMBNAIL_DIR
+    from extensions import db
+    from models import File
+
+    # Thumbnail cache
+    thumb_count, thumb_size = 0, 0
+    if os.path.isdir(THUMBNAIL_DIR):
+        for fname in os.listdir(THUMBNAIL_DIR):
+            try:
+                thumb_size += os.path.getsize(os.path.join(THUMBNAIL_DIR, fname))
+                thumb_count += 1
+            except OSError:
+                pass
+
+    # Orphan files — only meaningful in uploads (cleanup-enabled) mode
+    orphan_count = 0
+    if current_app.config.get('CLEANUP_ENABLED', False):
+        try:
+            db_names   = {f.stored_name for f in File.query.with_entities(File.stored_name).all()}
+            disk_names = set(os.listdir(upload_folder))
+            orphan_count = len(disk_names - db_names)
+        except Exception:
+            pass
+
+    # Active watch rooms and total connected peers
+    with watch_lock:
+        room_count = len(watch_sessions)
+    with viewers_lock:
+        peer_count = sum(len(v) for v in viewers_data.values())
+
     return jsonify({
         'system': {
             'cpu':       cpu_norm,
-            'ram_used':  ram_proc,    # LocalShare RSS in bytes
-            'ram_total': ram_total,   # system total in bytes (for context bar)
+            'ram_used':  ram_proc,
+            'ram_total': ram_total,
             'uptime':    int(uptime),
         },
         'storage': {
@@ -118,6 +149,14 @@ def api_stats():
             'upload_bps':   round(upload_bps),
             'download_bps': round(download_bps),
             'history':      list(_net_history),
+        },
+        'ops': {
+            'thumb_count':   thumb_count,
+            'thumb_size_hr': human_readable_size(thumb_size),
+            'log_count':     len(activity_log),
+            'orphan_count':  orphan_count,
+            'room_count':    room_count,
+            'peer_count':    peer_count,
         },
         'viewers': viewer_list,
         'logs':    list(activity_log),
@@ -142,3 +181,95 @@ def logs_dump():
     resp.headers['Content-Type']        = 'application/json'
     resp.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
     return resp
+
+# ============================================================
+# SYSTEM OPERATIONS  — four POST endpoints, all admin-only
+# ============================================================
+
+@dashboard_bp.route('/admin/api/clear-thumbnails', methods=['POST'])
+@admin_required
+def ops_clear_thumbnails():
+    """Purge all cached thumbnail files. They regenerate lazily on next view."""
+    from routes.files import THUMBNAIL_DIR
+
+    cleared, size = 0, 0
+    if os.path.isdir(THUMBNAIL_DIR):
+        for fname in os.listdir(THUMBNAIL_DIR):
+            fpath = os.path.join(THUMBNAIL_DIR, fname)
+            try:
+                size += os.path.getsize(fpath)
+                os.remove(fpath)
+                cleared += 1
+            except OSError:
+                pass
+
+    log_activity(request.remote_addr, 'Purge Thumbnails', THUMBNAIL_DIR,
+                 'ops_clear_thumbnails', f'{cleared} removed')
+    return jsonify({'status': 'ok', 'cleared': cleared,
+                    'thumb_count': 0, 'thumb_size_hr': '0.00 B'})
+
+
+@dashboard_bp.route('/admin/api/flush-logs', methods=['POST'])
+@admin_required
+def ops_flush_logs():
+    """Clear the in-memory activity log ring buffer."""
+    count = len(activity_log)
+    activity_log.clear()
+    # Log the flush itself so the buffer isn't completely empty after the op
+    log_activity(request.remote_addr, 'Flush Logs', '/admin/api/flush-logs',
+                 'ops_flush_logs', f'{count} entries cleared')
+    return jsonify({'status': 'ok', 'log_count': 1})
+
+
+@dashboard_bp.route('/admin/api/clean-orphans', methods=['POST'])
+@admin_required
+def ops_clean_orphans():
+    """
+    Remove files present on disk but absent from the database.
+    Only runs in uploads (cleanup-enabled) mode; safe no-ops otherwise.
+    """
+    if not current_app.config.get('CLEANUP_ENABLED', False):
+        return jsonify({'status': 'skipped', 'reason': 'custom folder mode',
+                        'orphan_count': 0})
+
+    from extensions import db
+    from models import File
+
+    upload_folder = current_app.config['UPLOAD_FOLDER']
+    removed = 0
+    try:
+        db_names   = {f.stored_name for f in File.query.with_entities(File.stored_name).all()}
+        disk_names = set(os.listdir(upload_folder))
+        orphans    = disk_names - db_names
+        for fname in orphans:
+            try:
+                os.remove(os.path.join(upload_folder, fname))
+                removed += 1
+            except OSError:
+                pass
+    except Exception as e:
+        return jsonify({'status': 'error', 'detail': str(e)}), 500
+
+    log_activity(request.remote_addr, 'Clean Orphans', upload_folder,
+                 'ops_clean_orphans', f'{removed} removed')
+    return jsonify({'status': 'ok', 'removed': removed, 'orphan_count': 0})
+
+
+@dashboard_bp.route('/admin/api/reset-rooms', methods=['POST'])
+@admin_required
+def ops_reset_rooms():
+    """
+    Clear all active Watch Together sessions and viewer presence records.
+    Connected clients will re-sync automatically on their next action.
+    """
+    with watch_lock:
+        room_count = len(watch_sessions)
+        watch_sessions.clear()
+
+    with viewers_lock:
+        peer_count = sum(len(v) for v in viewers_data.values())
+        viewers_data.clear()
+
+    log_activity(request.remote_addr, 'Reset Rooms', '/admin/api/reset-rooms',
+                 'ops_reset_rooms', f'{room_count} rooms, {peer_count} peers cleared')
+    return jsonify({'status': 'ok', 'room_count': 0, 'peer_count': 0})
