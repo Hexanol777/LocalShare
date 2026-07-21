@@ -349,10 +349,22 @@
         {% endfor %}
     ];
 
-    // State
-    const STORAGE_KEY = 'reader-settings-' + window.location.pathname + window.location.search;
-    let mode = localStorage.getItem(STORAGE_KEY) || 'ltr';
-    let currentIndex = 0;
+    // State & Persistence Key
+    const STORAGE_KEY = 'reader-state-' + window.location.pathname + window.location.search;
+    
+    let savedState = {};
+    try {
+        savedState = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
+    } catch(e) {}
+
+    let mode = savedState.mode || 'ltr';
+    let currentIndex = parseInt(savedState.page, 10);
+
+    // Validate bounds for loaded gallery
+    if (isNaN(currentIndex) || currentIndex < 0 || currentIndex >= imagesData.length) {
+        currentIndex = 0;
+    }
+
     let uiVisible = true;
     let sliderAnimFrame = null;
     
@@ -363,6 +375,13 @@
     const topbarProgress = document.getElementById('topbar-progress');
     const sheetOverlay = document.getElementById('sheet-overlay');
     const readingModeSheet = document.getElementById('reading-mode-sheet');
+
+    function saveState() {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({
+            mode: mode,
+            page: currentIndex
+        }));
+    }
 
     // ---------------- UI & TOGGLES ----------------
     function toggleUI() {
@@ -388,7 +407,7 @@
     document.querySelectorAll('.mode-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
             mode = e.currentTarget.dataset.mode;
-            localStorage.setItem(STORAGE_KEY, mode);
+            saveState();
             closeSheet();
             renderView();
         });
@@ -398,6 +417,7 @@
     function updateControls(animate = true) {
         pageCurrent.textContent = currentIndex + 1;
         topbarProgress.textContent = `${currentIndex + 1} / ${imagesData.length}`;
+        saveState();
         
         if (animate) {
             animateSliderTo(currentIndex);
@@ -476,6 +496,7 @@
         pageCurrent.textContent = currentIndex + 1;
         topbarProgress.textContent = `${currentIndex + 1} / ${imagesData.length}`;
         updateSliderRailFill();
+        saveState();
         
         if (mode.startsWith('vertical')) {
             scrollToVerticalPage(currentIndex);
