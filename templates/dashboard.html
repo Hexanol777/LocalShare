@@ -140,9 +140,7 @@
             <span class="dash-count" id="log-count">0</span>
         </h2>
         <div class="dash-header-actions">
-            <button class="action-btn" id="clear-thumbs-btn" onclick="clearThumbnails()">
-                🗑 Clear Thumbnails
-            </button>
+
             <a class="action-btn download-btn" href="{{ url_for('dashboard.logs_dump') }}">
                 ⬇ Dump Log
             </a>
@@ -170,6 +168,7 @@
     <!-- SYSTEM OPERATIONS -->
     <h2 class="dash-section-title" style="margin-top: 36px;">System Operations</h2>
 
+    <div class="ops-panel">
     <div class="ops-grid">
 
         <!-- CARD 1: Thumbnail Cache -->
@@ -199,7 +198,7 @@
                 <div class="ops-card-icon">📋</div>
             </div>
             <div class="ops-card-footer">
-                <button class="ops-btn ops-btn-secondary" id="ops-btn-logs"
+                <button class="ops-btn ops-btn-primary" id="ops-btn-logs"
                         onclick="opsAction('logs')">Flush Logs</button>
             </div>
         </div>
@@ -209,7 +208,10 @@
             <div class="ops-card-top">
                 <div>
                     <div class="ops-card-title">Upload Directory</div>
-                    <div class="ops-card-metric" id="ops-orphan-status">—</div>
+                    <div class="ops-card-metric">
+                        <span class="ops-status-dot" id="ops-orphan-dot"></span>
+                        <span id="ops-orphan-status">—</span>
+                    </div>
                     <div class="ops-card-sub" id="ops-orphan-sub">Checking…</div>
                 </div>
                 <div class="ops-card-icon">📁</div>
@@ -236,6 +238,7 @@
             </div>
         </div>
 
+    </div>
     </div>
 
 </div>
@@ -437,6 +440,7 @@ function update() {
             if (!document.getElementById('ops-btn-orphans').disabled) {
                 document.getElementById('ops-orphan-status').textContent = ops.orphan_count === 0 ? 'In Sync' : `${ops.orphan_count} orphan${ops.orphan_count !== 1 ? 's' : ''}`;
                 document.getElementById('ops-orphan-sub').textContent    = ops.orphan_count === 0 ? 'No untracked files found' : 'Untracked files detected';
+                document.getElementById('ops-orphan-dot').className      = 'ops-status-dot ' + (ops.orphan_count === 0 ? 'ok' : 'warn');
             }
             if (!document.getElementById('ops-btn-rooms').disabled) {
                 document.getElementById('ops-room-count').textContent = `${ops.room_count} active room${ops.room_count !== 1 ? 's' : ''}`;
@@ -447,10 +451,12 @@ function update() {
 }
 
 // ---------- Custom confirm modal ----------
-function opsConfirm(message) {
+function opsConfirm(message, destructive = false) {
     return new Promise(resolve => {
         const backdrop = document.getElementById('ls-modal-backdrop');
+        const okBtn    = document.getElementById('ls-modal-ok');
         document.getElementById('ls-modal-msg').textContent = message;
+        okBtn.className = destructive ? 'ops-btn ops-btn-danger' : 'ops-btn ops-btn-primary';
         backdrop.style.display = 'flex';
 
         function finish(result) {
@@ -459,7 +465,6 @@ function opsConfirm(message) {
             cancelBtn.removeEventListener('click', onCancel);
             resolve(result);
         }
-        const okBtn     = document.getElementById('ls-modal-ok');
         const cancelBtn = document.getElementById('ls-modal-cancel');
         function onOk()     { finish(true);  }
         function onCancel() { finish(false); }
@@ -470,15 +475,15 @@ function opsConfirm(message) {
 
 // ---------- Ops action dispatcher ----------
 const OPS_CONFIG = {
-    thumbs:  { url: '/admin/api/clear-thumbnails', btn: 'ops-btn-thumbs',  label: 'Purge Cache',   confirm: 'Purge all cached thumbnails? They regenerate automatically on next view.' },
-    logs:    { url: '/admin/api/flush-logs',        btn: 'ops-btn-logs',    label: 'Flush Logs',    confirm: 'Flush the entire activity log? This cannot be undone.' },
-    orphans: { url: '/admin/api/clean-orphans',     btn: 'ops-btn-orphans', label: 'Scan & Clean',  confirm: 'Scan for orphaned files and permanently delete them?' },
-    rooms:   { url: '/admin/api/reset-rooms',       btn: 'ops-btn-rooms',   label: 'Reset Rooms',   confirm: 'Reset all active Watch Together rooms? Connected viewers will need to resync.' },
+    thumbs:  { url: '/admin/api/clear-thumbnails', btn: 'ops-btn-thumbs',  label: 'Purge Cache',  destructive: true, confirm: 'Purge all cached thumbnails? They regenerate automatically on next view.' },
+    logs:    { url: '/admin/api/flush-logs',        btn: 'ops-btn-logs',    label: 'Flush Logs',   destructive: true, confirm: 'Flush the entire activity log? This cannot be undone.' },
+    orphans: { url: '/admin/api/clean-orphans',     btn: 'ops-btn-orphans', label: 'Scan & Clean', destructive: true, confirm: 'Scan for orphaned files and permanently delete them?' },
+    rooms:   { url: '/admin/api/reset-rooms',       btn: 'ops-btn-rooms',   label: 'Reset Rooms',  destructive: true, confirm: 'Reset all active Watch Together rooms? Connected viewers will need to resync.' },
 };
 
 async function opsAction(key) {
     const cfg = OPS_CONFIG[key];
-    if (!await opsConfirm(cfg.confirm)) return;
+    if (!await opsConfirm(cfg.confirm, cfg.destructive)) return;
 
     const btn = document.getElementById(cfg.btn);
     btn.disabled    = true;
@@ -501,6 +506,7 @@ async function opsAction(key) {
             } else if (key === 'orphans') {
                 document.getElementById('ops-orphan-status').textContent = 'In Sync';
                 document.getElementById('ops-orphan-sub').textContent    = 'No untracked files found';
+                document.getElementById('ops-orphan-dot').className      = 'ops-status-dot ok';
             } else if (key === 'rooms') {
                 document.getElementById('ops-room-count').textContent = '0 active rooms';
                 document.getElementById('ops-peer-count').textContent = '0 connected peers';
@@ -517,31 +523,8 @@ async function opsAction(key) {
     }
 }
 
-async function clearThumbnails() {
-    if (!await opsConfirm('Clear all cached thumbnails? They will regenerate automatically next time each file is viewed.')) return;
-
-    const btn = document.getElementById('clear-thumbs-btn');
-    const originalText = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = 'Clearing…';
-
-    try {
-        const res  = await fetch('/api/thumbnails/clear', { method: 'POST' });
-        const data = await res.json();
-        btn.textContent = `✓ Cleared ${data.cleared}`;
-    } catch (e) {
-        console.error('Clear thumbnails error:', e);
-        btn.textContent = '✕ Failed';
-    } finally {
-        setTimeout(() => {
-            btn.textContent = originalText;
-            btn.disabled = false;
-        }, 2000);
-    }
-}
-
 update();
-setInterval(update, 5000);
+setInterval(update, 4000);
 </script>
 
 </body>

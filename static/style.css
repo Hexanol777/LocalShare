@@ -1021,17 +1021,25 @@ body {
    SYSTEM OPERATIONS
    ============================================================ */
 
-.ops-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 16px;
+.ops-panel {
+    background: #1b1f24;
+    border: 1px solid #2c3440;
+    border-radius: 16px;
+    padding: 16px;
     margin-bottom: 40px;
 }
 
+.ops-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 0;
+}
+
 .ops-card {
-    background: #1b1f24;
+    background: #111315;
     border: 1px solid #2c3440;
-    border-radius: 14px;
+    border-radius: 12px;
     padding: 20px;
     display: flex;
     flex-direction: column;
@@ -1047,9 +1055,9 @@ body {
 }
 
 .ops-card-icon {
-    font-size: 1.5rem;
+    font-size: 1.4rem;
     flex-shrink: 0;
-    opacity: 0.55;
+    opacity: 0.5;
     margin-top: 2px;
 }
 
@@ -1063,11 +1071,14 @@ body {
 }
 
 .ops-card-metric {
-    font-size: 1.35rem;
+    font-size: 1.3rem;
     font-weight: 700;
     color: #e2e8f0;
     margin-bottom: 3px;
     line-height: 1.2;
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
 
 .ops-card-sub {
@@ -1078,29 +1089,91 @@ body {
 .ops-card-footer {
     display: flex;
     justify-content: flex-end;
-    margin-top: 18px;
+    margin-top: 16px;
 }
 
-/* Base ops button */
+/* Status dot */
+.ops-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: #3a4050;
+}
+
+.ops-status-dot.ok {
+    background: #22c55e;
+    box-shadow: 0 0 6px rgba(34,197,94,0.5);
+    animation: dot-pulse 2s ease-in-out infinite;
+}
+
+.ops-status-dot.warn { background: #f59e0b; box-shadow: 0 0 6px rgba(245,158,11,0.45); }
+
+@keyframes dot-pulse {
+    0%, 100% { box-shadow: 0 0 4px rgba(34,197,94,0.4); opacity: 1; }
+    50%       { box-shadow: 0 0 10px rgba(34,197,94,0.8); opacity: 0.75; }
+}
+
+/* Unified ops button — all cards same blue style */
 .ops-btn {
-    border: none;
+    flex-shrink: 0;
+    background: rgba(89,193,255,0.10);
+    color: #59c1ff;
+    border: 1px solid rgba(89,193,255,0.22);
     border-radius: 8px;
-    padding: 7px 14px;
+    padding: 7px 15px;
     font-size: 0.8rem;
     font-weight: 600;
     cursor: pointer;
-    transition: opacity 0.15s, filter 0.15s;
+    white-space: nowrap;
+    transition: background 0.15s, filter 0.15s;
 }
 
-.ops-btn:hover:not(:disabled)  { filter: brightness(1.15); }
-.ops-btn:disabled               { opacity: 0.45; cursor: default; filter: none; }
+.ops-btn:hover:not(:disabled)  { background: rgba(89,193,255,0.18); }
+.ops-btn:disabled               { opacity: 0.45; cursor: default; }
 
-/* Variants */
-.ops-btn-warn      { background: rgba(89,193,255,0.12); color: #59c1ff; border: 1px solid rgba(89,193,255,0.25); }
-.ops-btn-secondary { background: rgba(89,193,255,0.12); color: #59c1ff; border: 1px solid rgba(89,193,255,0.25); }
-.ops-btn-primary   { background: rgba(89,193,255,0.12); color: #59c1ff; border: 1px solid rgba(89,193,255,0.25); }
-.ops-btn-danger    { background: rgba(89,193,255,0.12); color: #59c1ff; border: 1px solid rgba(89,193,255,0.25); }
+/* Modal OK button danger variant (destructive confirms only) */
+.ops-btn-danger  { background: rgba(239,68,68,0.12); color: #ef4444; border-color: rgba(239,68,68,0.28); }
+.ops-btn-danger:hover:not(:disabled) { background: rgba(239,68,68,0.22); }
 
-@media (max-width: 600px) {
-    .ops-grid { grid-template-columns: 1fr; }
+/* Modal cancel button */
+.ops-btn-secondary { background: rgba(148,163,184,0.08); color: #94a3b8; border-color: rgba(148,163,184,0.18); }
+.ops-btn-secondary:hover:not(:disabled) { background: rgba(148,163,184,0.14); }
+
+/* ============================================================
+   CUSTOM CONFIRM MODAL
+   ============================================================ */
+
+.ls-modal-backdrop {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 999;
+    backdrop-filter: blur(2px);
+}
+
+.ls-modal {
+    background: #1b1f24;
+    border: 1px solid #2c3440;
+    border-radius: 14px;
+    padding: 28px 28px 22px;
+    max-width: 380px;
+    width: 90%;
+    box-shadow: 0 24px 60px rgba(0,0,0,0.5);
+}
+
+.ls-modal-msg {
+    color: #e2e8f0;
+    font-size: 0.95rem;
+    line-height: 1.55;
+    margin: 0 0 22px;
+}
+
+.ls-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
 }
