@@ -158,24 +158,76 @@
                 {% endif %}
             </div>
 
-            <!-- Admin actions -->
+            <!-- Hidden delete form — submitted via JS from the dropdown -->
             {% if admin_mode %}
-            <div class="admin-actions">
-                <button class="admin-btn rename-btn"
-                        onclick="startRename({{ item.file_id }})"
-                        title="Rename">✏</button>
-                <form method="POST"
-                      action="{{ url_for('files.delete_file', file_id=item.file_id) }}"
-                      onsubmit="return confirm('Delete \'{{ item.name }}\'? This cannot be undone.')">
-                    <button type="submit" class="admin-btn delete-btn" title="Delete">🗑</button>
-                </form>
-            </div>
+            <form id="del-form-{{ item.file_id }}" method="POST"
+                  action="{{ url_for('files.delete_file', file_id=item.file_id) }}"
+                  style="display:none;"></form>
             {% endif %}
+
+            <!-- Three-dot context menu -->
+            <div class="file-menu-wrap">
+                <button class="file-menu-btn"
+                        onclick="toggleMenu(event, {{ item.file_id }})"
+                        title="More options">⋮</button>
+                <div class="file-menu-dropdown hidden" id="menu-{{ item.file_id }}">
+                    <button class="menu-item"
+                            onclick="showInfo({{ item.file_id }}, {{ item.has_thumbnail | tojson }}); closeMenus()">
+                        <span class="menu-icon">ℹ</span> Info
+                    </button>
+                    {% if admin_mode %}
+                    <button class="menu-item"
+                            onclick="startRename({{ item.file_id }}); closeMenus()">
+                        <span class="menu-icon">✏</span> Rename
+                    </button>
+                    <button class="menu-item menu-item-danger"
+                            onclick="deleteFile({{ item.file_id }}, {{ item.name | tojson }})">
+                        <span class="menu-icon">🗑</span> Delete
+                    </button>
+                    {% endif %}
+                </div>
+            </div>
 
         </div>
         {% endif %}
 
         {% endfor %}
+    </div>
+</div>
+
+<!-- INFO MODAL -->
+<div id="info-backdrop" class="info-backdrop" style="display:none;">
+    <div class="info-modal">
+
+        <div class="info-modal-head">
+            <div class="info-fields">
+                <div class="info-row">
+                    <span class="info-label">Name</span>
+                    <span class="info-value" id="info-name">—</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Size</span>
+                    <span class="info-value" id="info-size">—</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Added</span>
+                    <span class="info-value" id="info-added">—</span>
+                </div>
+            </div>
+            <div id="info-thumb-wrap" class="info-thumb-wrap" style="display:none;">
+                <img id="info-thumb" class="info-thumb" src="" alt="">
+            </div>
+        </div>
+
+        <div id="info-meta-section" style="display:none;">
+            <div class="info-divider"></div>
+            <div id="info-meta-grid" class="info-meta-grid"></div>
+        </div>
+
+        <div class="info-modal-footer">
+            <button class="info-close-btn" onclick="closeInfo()">Close</button>
+        </div>
+
     </div>
 </div>
 
@@ -274,6 +326,72 @@ function cancelRename(fileId) {
     document.getElementById('fname-' + fileId).classList.remove('hidden');
     document.getElementById('rename-form-' + fileId).classList.add('hidden');
 }
+
+/* ---------- Three-dot context menu ---------- */
+function toggleMenu(e, fileId) {
+    e.stopPropagation();
+    const menu   = document.getElementById('menu-' + fileId);
+    const isOpen = !menu.classList.contains('hidden');
+    closeMenus();
+    if (!isOpen) menu.classList.remove('hidden');
+}
+
+function closeMenus() {
+    document.querySelectorAll('.file-menu-dropdown').forEach(m => m.classList.add('hidden'));
+}
+
+document.addEventListener('click', closeMenus);
+
+function deleteFile(fileId, name) {
+    if (!confirm(`Delete '${name}'? This cannot be undone.`)) return;
+    closeMenus();
+    document.getElementById('del-form-' + fileId).submit();
+}
+
+/* ---------- Info modal ---------- */
+async function showInfo(fileId, hasThumb) {
+    const backdrop = document.getElementById('info-backdrop');
+    backdrop.style.display = 'flex';
+
+    // Loading state
+    document.getElementById('info-name').textContent  = 'Loading…';
+    document.getElementById('info-size').textContent  = '—';
+    document.getElementById('info-added').textContent = '—';
+    document.getElementById('info-meta-section').style.display = 'none';
+
+    const thumbWrap = document.getElementById('info-thumb-wrap');
+    const thumb     = document.getElementById('info-thumb');
+    if (hasThumb) {
+        thumb.src = `/thumbnail/${fileId}`;
+        thumbWrap.style.display = 'block';
+    } else {
+        thumbWrap.style.display = 'none';
+    }
+
+    try {
+        const data = await (await fetch(`/file/${fileId}/info`)).json();
+        document.getElementById('info-name').textContent  = data.name;
+        document.getElementById('info-size').textContent  = data.size;
+        document.getElementById('info-added').textContent = data.added;
+
+        const keys = Object.keys(data.meta || {});
+        if (keys.length) {
+            document.getElementById('info-meta-grid').innerHTML =
+                keys.map(k => `<div class="meta-key">${k}</div><div class="meta-val">${data.meta[k]}</div>`).join('');
+            document.getElementById('info-meta-section').style.display = 'block';
+        }
+    } catch (e) {
+        document.getElementById('info-name').textContent = 'Failed to load';
+    }
+}
+
+function closeInfo() {
+    document.getElementById('info-backdrop').style.display = 'none';
+}
+
+document.getElementById('info-backdrop').addEventListener('click', function(e) {
+    if (e.target === this) closeInfo();
+});
 </script>
 
 </body>
