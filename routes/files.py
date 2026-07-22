@@ -6,7 +6,7 @@ import shutil
 from urllib.parse import quote
 
 from flask import (Blueprint, render_template, request, redirect,
-                   url_for, send_file, Response, current_app, abort)
+                   url_for, send_file, Response, current_app, abort, jsonify)
 from werkzeug.utils import secure_filename
 
 from extensions import db
@@ -363,6 +363,24 @@ def stream_page(file_id):
                            ext=ext)
 
 
+@files_bp.route('/api/thumbnails/clear', methods=['POST'])
+@admin_required
+def clear_thumbnails():
+    """Delete all cached thumbnails. They regenerate lazily on next view."""
+    cleared = 0
+    if os.path.isdir(THUMBNAIL_DIR):
+        for fname in os.listdir(THUMBNAIL_DIR):
+            try:
+                os.remove(os.path.join(THUMBNAIL_DIR, fname))
+                cleared += 1
+            except OSError:
+                pass
+
+    log_activity(request.remote_addr, 'Clear Thumbnails', THUMBNAIL_DIR,
+                 'clear_thumbnails', f'{cleared} removed')
+    return {'status': 'ok', 'cleared': cleared}
+
+
 @files_bp.route('/thumbnail/<int:file_id>')
 def thumbnail(file_id):
     if not PILLOW_AVAILABLE:
@@ -423,24 +441,6 @@ def thumbnail(file_id):
 
     return send_file(thumb_path, mimetype='image/webp')
 
-# Placement not decided
-@files_bp.route('/api/thumbnails/clear', methods=['POST'])
-@admin_required
-def clear_thumbnails():
-    """Delete all cached thumbnails. They regenerate lazily on next view."""
-    cleared = 0
-    if os.path.isdir(THUMBNAIL_DIR):
-        for fname in os.listdir(THUMBNAIL_DIR):
-            try:
-                os.remove(os.path.join(THUMBNAIL_DIR, fname))
-                cleared += 1
-            except OSError:
-                pass
-
-    log_activity(request.remote_addr, 'Clear Thumbnails', THUMBNAIL_DIR,
-                 'clear_thumbnails', f'{cleared} removed')
-    return {'status': 'ok', 'cleared': cleared}
-
 
 @files_bp.route('/raw/<int:file_id>')
 def raw_file(file_id):
@@ -477,3 +477,141 @@ def reader():
     db.session.commit()
     images.sort(key=lambda x: natural_sort_key(x['name']))
     return render_template('reader.html', images=images, folder=safe_path)
+
+# ============================================================
+# FILE INFO  — metadata endpoint for the info popup
+# ============================================================
+
+def _fmt_duration(seconds):
+    try:
+        s = int(float(seconds))
+        h, rem = divmod(s, 3600)
+        m, sec = divmod(rem, 60)
+        return f'{h}:{m:02d}:{sec:02d}' if h else f'{m}:{sec:02d}'
+    except Exception:
+        return '—'
+
+
+def _ffprobe(path):
+    try:
+        r = subprocess.run(
+            ['ffprobe', '-v', 'quiet', '-print_format', 'json',
+             '-show_streams', '-show_format', path],
+            capture_output=True, text=True, timeout=10
+        )
+        import json as _json
+        return _json.loads(r.stdout)
+    except Exception:
+        return {}
+
+
+def _video_meta(path):
+    data = _ffprobe(path)
+    if not data:
+        return {}
+    streams = data.get('streams', [])
+    fmt     = data.get('format', {})
+    video   = next((s for s in streams if s.get('codec_type') == 'video'), None)
+    audio   = next((s for s in streams if s.get('codec_type') == 'audio'), None)
+    meta    = {}
+
+    dur = fmt.get('duration') or (video or {}).get('duration')
+    if dur:
+        meta['Duration'] = _fmt_duration(dur)
+
+    if video:
+        w, h = video.get('width'), video.get('height')
+        if w and h:
+            meta['Resolution'] = f'{w} × {h}'
+        fps_str = video.get('r_frame_rate', '')
+        if '/' in fps_str:
+            num, den = fps_str.split('/')
+            if int(den):
+                meta['Frame Rate'] = f'{round(int(num)/int(den), 3)} fps'
+        codec = video.get('codec_name', '').upper()
+        if codec:
+            meta['Video Codec'] = codec
+
+    if audio:
+        codec = audio.get('codec_name', '').upper()
+        if codec:
+            meta['Audio Codec'] = codec
+        ch = audio.get('channels')
+        if ch:
+            meta['Audio'] = {1:'Mono', 2:'Stereo', 6:'5.1', 8:'7.1'}.get(ch, f'{ch}ch')
+
+    br = fmt.get('bit_rate')
+    if br:
+        meta['Bitrate'] = f'{int(br)//1000} kbps'
+
+    return meta
+
+
+def _audio_meta(path):
+    data = _ffprobe(path)
+    if not data:
+        return {}
+    streams = data.get('streams', [])
+    fmt     = data.get('format', {})
+    audio   = next((s for s in streams if s.get('codec_type') == 'audio'), None)
+    meta    = {}
+
+    dur = fmt.get('duration') or (audio or {}).get('duration')
+    if dur:
+        meta['Duration'] = _fmt_duration(dur)
+
+    if audio:
+        codec = audio.get('codec_name', '').upper()
+        if codec:
+            meta['Codec'] = codec
+        sr = audio.get('sample_rate')
+        if sr:
+            meta['Sample Rate'] = f'{int(sr):,} Hz'
+        ch = audio.get('channels')
+        if ch:
+            meta['Channels'] = {1:'Mono', 2:'Stereo', 6:'5.1', 8:'7.1'}.get(ch, f'{ch}ch')
+
+    br = fmt.get('bit_rate')
+    if br:
+        meta['Bitrate'] = f'{int(br)//1000} kbps'
+
+    return meta
+
+
+def _image_meta(path):
+    try:
+        from PIL import Image
+        with Image.open(path) as img:
+            return {'Dimensions': f'{img.width} × {img.height} px', 'Format': img.format or '—'}
+    except Exception:
+        return {}
+
+
+_VIDEO_EXT = {'.mp4', '.mkv', '.webm', '.ts', '.m4v', '.avi', '.mov'}
+_AUDIO_EXT = {'.mp3', '.flac', '.m4a', '.m4b', '.ogg', '.wav', '.aac'}
+_IMAGE_EXT = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'}
+
+
+@files_bp.route('/file/<int:file_id>/info')
+def file_info(file_id):
+    f    = File.query.get_or_404(file_id)
+    path = os.path.join(current_app.config['UPLOAD_FOLDER'], f.stored_name)
+    ext  = os.path.splitext(f.original_name)[1].lower()
+
+    if ext in _VIDEO_EXT:
+        meta = _video_meta(path)
+    elif ext in _AUDIO_EXT:
+        meta = _audio_meta(path)
+    elif ext in _IMAGE_EXT:
+        meta = _image_meta(path)
+    else:
+        meta = {}
+
+    return jsonify({
+        'name':          f.original_name,
+        'size':          human_readable_size(f.file_size),
+        'added':         f.upload_time.strftime('%B %d, %Y · %H:%M'),
+        'has_thumbnail': ext in _IMAGE_EXT or ext in _VIDEO_EXT,
+        'file_id':       file_id,
+        'meta':          meta,
+    })
