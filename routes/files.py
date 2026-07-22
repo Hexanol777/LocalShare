@@ -70,6 +70,7 @@ def natural_sort_key(s):
 
 def _resolve_subpath(subpath):
     p = os.path.normpath(subpath).lstrip('/') if subpath.strip() else ''
+    p = p.replace('\\', '/') # normalize windows separators from backslashesh to forward to fix breadcrubs
     return '' if p == '.' else p
 
 
