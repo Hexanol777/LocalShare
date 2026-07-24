@@ -520,12 +520,21 @@
     }
 
     function fillSlots() {
-        // slot 0 = index-1, slot 1 = current, slot 2 = index+1 (always by number)
-        const p = currentIndex - 1;
-        const n = currentIndex + 1;
-        slotImgs[0].src = (p >= 0) ? imagesData[p] : '';
-        slotImgs[1].src = imagesData[currentIndex];
-        slotImgs[2].src = (n < imagesData.length) ? imagesData[n] : '';
+        // In LTR: slot 0 = index-1 (prev), slot 1 = current, slot 2 = index+1 (next)
+        // In RTL: slot 0 = index+1 (prev in reading order), slot 2 = index-1 (next in reading order)
+        if (mode === 'rtl') {
+            const prev = currentIndex + 1;
+            const next = currentIndex - 1;
+            slotImgs[0].src = (prev < imagesData.length) ? imagesData[prev] : '';
+            slotImgs[1].src = imagesData[currentIndex];
+            slotImgs[2].src = (next >= 0) ? imagesData[next] : '';
+        } else {
+            const prev = currentIndex - 1;
+            const next = currentIndex + 1;
+            slotImgs[0].src = (prev >= 0) ? imagesData[prev] : '';
+            slotImgs[1].src = imagesData[currentIndex];
+            slotImgs[2].src = (next < imagesData.length) ? imagesData[next] : '';
+        }
         slideTrack.classList.remove('animating');
         slideTrack.style.transform = 'translateX(-33.3333%)';
     }
