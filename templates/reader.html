@@ -194,18 +194,41 @@
             min-height: 100vh;
         }
 
-        /* Paged Mode */
+        /* Paged Mode — slide track */
         .reader-paged {
+            height: 100vh;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .slide-track {
+            display: flex;
+            height: 100%;
+            width: 300%;
+            transform: translateX(-33.3333%);
+            will-change: transform;
+        }
+
+        .slide-track.animating {
+            transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .slide-slot {
+            width: 33.3333%;
+            height: 100%;
             display: flex;
             align-items: center;
             justify-content: center;
-            height: 100vh;
-            overflow: hidden;
+            flex-shrink: 0;
         }
-        .reader-paged img {
+
+        .slide-slot img {
             max-width: 100%;
             max-height: 100%;
             object-fit: contain;
+            user-select: none;
+            -webkit-user-drag: none;
+            pointer-events: none;
         }
 
         /* Vertical Modes */
@@ -473,22 +496,89 @@
         sliderAnimFrame = requestAnimationFrame(step);
     }
 
-    function navigate(direction) {
-        let newIndex = currentIndex + direction;
-        if (newIndex < 0) newIndex = 0;
-        if (newIndex >= imagesData.length) newIndex = imagesData.length - 1;
-        
-        if (newIndex !== currentIndex) {
+    // ---------------- PAGED SLIDE TRACK ----------------
+    let slideTrack = null;
+    let slotImgs   = [];
+    let isSliding  = false;
+
+    function buildSlideTrack() {
+        readerContainer.className = 'reader-paged';
+        readerContainer.innerHTML = '';
+        slideTrack = document.createElement('div');
+        slideTrack.className = 'slide-track';
+        slotImgs = [];
+        for (let i = 0; i < 3; i++) {
+            const slot = document.createElement('div');
+            slot.className = 'slide-slot';
+            const img = document.createElement('img');
+            slot.appendChild(img);
+            slideTrack.appendChild(slot);
+            slotImgs.push(img);
+        }
+        readerContainer.appendChild(slideTrack);
+        fillSlots();
+    }
+
+    function fillSlots() {
+        // slot 0 = index-1, slot 1 = current, slot 2 = index+1 (always by number)
+        const p = currentIndex - 1;
+        const n = currentIndex + 1;
+        slotImgs[0].src = (p >= 0) ? imagesData[p] : '';
+        slotImgs[1].src = imagesData[currentIndex];
+        slotImgs[2].src = (n < imagesData.length) ? imagesData[n] : '';
+        slideTrack.classList.remove('animating');
+        slideTrack.style.transform = 'translateX(-33.3333%)';
+    }
+
+    function slideTo(direction) {
+        if (isSliding) return;
+        const newIndex = currentIndex + direction;
+        if (newIndex < 0 || newIndex >= imagesData.length) return;
+        isSliding = true;
+        // LTR + going to higher index → track slides left; RTL reverses physical direction
+        const goLeft = (direction === 1 && mode === 'ltr') || (direction === -1 && mode === 'rtl');
+        slideTrack.classList.add('animating');
+        slideTrack.style.transform = goLeft ? 'translateX(-66.6666%)' : 'translateX(0%)';
+        slideTrack.addEventListener('transitionend', () => {
             currentIndex = newIndex;
-            if (mode.startsWith('vertical')) {
-                scrollToVerticalPage(currentIndex);
-            } else {
-                renderView(true);
-            }
+            fillSlots();
+            updateControls(true);
+            preloadPagedImages();
+            isSliding = false;
+        }, { once: true });
+    }
+
+    // Touch swipe for paged modes
+    let touchStartX = 0, touchStartY = 0;
+    readerContainer.addEventListener('touchstart', e => {
+        if (mode.startsWith('vertical')) return;
+        touchStartX = e.touches[0].clientX;
+        touchStartY = e.touches[0].clientY;
+    }, { passive: true });
+
+    readerContainer.addEventListener('touchend', e => {
+        if (mode.startsWith('vertical')) return;
+        const dx = e.changedTouches[0].clientX - touchStartX;
+        const dy = e.changedTouches[0].clientY - touchStartY;
+        if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+            // Swipe left = forward reading direction, swipe right = backward
+            navigate((dx < 0 ? 1 : -1) * (mode === 'ltr' ? 1 : -1));
+        }
+    }, { passive: true });
+
+    // ---------------- NAVIGATION ----------------
+    function navigate(direction) {
+        if (mode.startsWith('vertical')) {
+            let newIndex = currentIndex + direction;
+            if (newIndex < 0) newIndex = 0;
+            if (newIndex >= imagesData.length) newIndex = imagesData.length - 1;
+            if (newIndex !== currentIndex) scrollToVerticalPage(newIndex);
+        } else {
+            slideTo(direction);
         }
     }
 
-    // Manual slider drag -> instant responsiveness without animation lag
+    // Manual slider drag — jump instantly without slide animation
     pageSlider.addEventListener('input', (e) => {
         if (sliderAnimFrame) cancelAnimationFrame(sliderAnimFrame);
         
@@ -501,7 +591,8 @@
         if (mode.startsWith('vertical')) {
             scrollToVerticalPage(currentIndex);
         } else {
-            renderView(false);
+            if (slideTrack && readerContainer.contains(slideTrack)) fillSlots();
+            preloadPagedImages();
         }
     });
 
@@ -529,13 +620,11 @@
                 loadVerticalImages();
             }
         } else {
-            readerContainer.className = 'reader-paged';
-            readerContainer.innerHTML = '';
-            
-            const img = document.createElement('img');
-            img.src = imagesData[currentIndex];
-            readerContainer.appendChild(img);
-
+            if (!slideTrack || !readerContainer.contains(slideTrack)) {
+                buildSlideTrack();
+            } else {
+                fillSlots();
+            }
             preloadPagedImages();
         }
     }
