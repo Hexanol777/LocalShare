@@ -5,6 +5,44 @@
     <title>Stream – LocalShare</title>
 
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        /* ── GIF viewer ─────────────────────────────────────────── */
+        .gif-display {
+            display: block;
+            max-width: 100%;
+            max-height: calc(100vh - 60px);
+            object-fit: contain;
+            margin: auto;
+        }
+
+        /* ── Unsupported-format fallback card ────────────────────── */
+        .unsupported-wrap {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: calc(100vh - 60px);
+            gap: 12px;
+            text-align: center;
+            padding: 2rem;
+        }
+        .unsupported-icon  { font-size: 3rem; }
+        .unsupported-title { font-size: 1.2rem; font-weight: 600; color: #fff; margin: 0; }
+        .unsupported-sub   { font-size: 0.9rem; color: #888; margin: 0; max-width: 420px; word-break: break-all; }
+        .unsupported-hint  { font-size: 0.82rem; color: #666; margin: 0; max-width: 420px; }
+        .unsupported-dl {
+            display: inline-block;
+            margin-top: 8px;
+            padding: 10px 28px;
+            background: #2a6af5;
+            color: #fff;
+            border-radius: 6px;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+        .unsupported-dl:hover { background: #1a5ae5; }
+    </style>
 </head>
 <body>
 
@@ -15,24 +53,59 @@
     <span></span>
 </div>
 
-<!-- PLAYER -->
+<!-- ============================================================
+     PLAYER  — rendered based on player_type, not raw mimetype.
+     player_type is resolved server-side in stream_page() after
+     probing the actual video codec so the right path is chosen
+     before a single byte is sent to the browser.
+     ============================================================ -->
 <div class="player-wrap">
+
+    {% if player_type == 'gif' %}
+    {# Animated GIF — browsers play these natively as <img>, not <video>. #}
+    <img class="gif-display"
+         src="{{ url_for('files.stream_file', file_id=file_id) }}"
+         alt="{{ file_name }}">
+
+    {% elif player_type == 'unsupported' %}
+    {# Format the browser cannot play — offer a direct download instead. #}
+    <div class="unsupported-wrap">
+        <div class="unsupported-icon">⚠️</div>
+        <p class="unsupported-title">This format can't be played in the browser</p>
+        <p class="unsupported-sub">{{ file_name }}</p>
+        <a class="unsupported-dl"
+           href="{{ url_for('files.download_file', file_id=file_id) }}">
+            ⬇ Download file
+        </a>
+    </div>
+
+    {% else %}
+    {#
+       video / audio / ts — all use a <video> element.
+         ts    → no <source>; mpegts.js attaches it in JS.
+         video / audio → direct /stream/<id> with the file's own MIME type.
+    #}
     <video id="videoPlayer" controls>
-        {# TS files: mpegts.js attaches the source — no <source> tag needed #}
-        {% if mimetype != 'video/mp2t' %}
-        <source src="{{ url_for('files.stream_file', file_id=file_id) }}" type="{{ mimetype }}">
+        {% if player_type == 'ts' %}
+            {# mpegts.js injects the source after load — no <source> tag here. #}
+        {% else %}
+            <source src="{{ url_for('files.stream_file', file_id=file_id) }}"
+                    type="{{ mimetype }}">
         {% endif %}
     </video>
-</div>
+    {% endif %}
 
-<!-- CONTROLS -->
+</div><!-- /.player-wrap -->
+
+{% if player_type not in ('gif', 'unsupported') %}
+<!-- CONTROLS — only rendered for playable types -->
 <div class="stream-controls">
     <button class="ctrl-btn" id="playBtn">▶ Play</button>
     <button class="ctrl-btn" id="pauseBtn">⏸ Pause</button>
     <button class="ctrl-btn" id="syncBtn">🔄 Sync</button>
     <span class="sync-status" id="syncStatus">🟢 Synced</span>
     <span class="latency-badge" id="latencyInfo"></span>
-</div><!-- /.stream-controls -->
+</div>
 
 <!-- VIEWER PANEL -->
 <div class="viewer-panel" id="viewerPanel" style="display:none;">
@@ -41,12 +114,13 @@
         <span style="color:#555;">Loading...</span>
     </div>
 </div>
+{% endif %}
 
+{% if player_type not in ('gif', 'unsupported') %}
 <script>
 // ============================================================
-// initPlayer is defined HERE — before the mpegts loader IIFE
-// below can possibly call it. This eliminates the race condition
-// that was causing TS playback to silently fail.
+// initPlayer — defined before the async loader IIFE below so
+// mpegts.js can call it as its onload callback without a race.
 // ============================================================
 function initPlayer() {
     const video  = document.getElementById('videoPlayer');
@@ -54,7 +128,8 @@ function initPlayer() {
     const socket = io();
 
     // ---------- TS: wire up mpegts.js ----------
-    {% if mimetype == 'video/mp2t' %}
+    // Only compiled in for .ts files; all other types have a <source> tag.
+    {% if player_type == 'ts' %}
     if (typeof mpegts !== 'undefined' && mpegts.getFeatureList().mseLivePlayback) {
         const player = mpegts.createPlayer({
             type:   'mpegts',
@@ -64,7 +139,7 @@ function initPlayer() {
         player.attachMediaElement(video);
         player.load();
     } else {
-        console.error('mpegts loaded but MSE is unavailable in this browser.');
+        console.error('mpegts.js loaded but MSE is unavailable in this browser.');
     }
     {% endif %}
 
@@ -72,11 +147,11 @@ function initPlayer() {
     // WATCH TOGETHER
     // ============================================================
 
-    let syncing         = false;
-    let isCorrecting    = false;
-    let suppressEvents  = false;
-    let lastSeq         = -1;
-    let seekDebounce    = null;
+    let syncing           = false;
+    let isCorrecting      = false;
+    let suppressEvents    = false;
+    let lastSeq           = -1;
+    let seekDebounce      = null;
     let heartbeatInterval = null;
     let serverTimeOffset  = 0;
 
@@ -127,7 +202,7 @@ function initPlayer() {
             const fallback = setTimeout(onSeeked, 1500);
             video.addEventListener('seeked', onSeeked);
 
-            video.currentTime = Math.max(0, target);
+            video.currentTime    = Math.max(0, target);
             statusEl.textContent = `🎬 Hard sync (${diff.toFixed(2)}s)`;
         } else {
             applyPlaybackRateCorrection(diff);
@@ -211,7 +286,7 @@ function initPlayer() {
     // ---------- Viewer list ----------
     async function fetchViewers() {
         try {
-            const data = await (await fetch(`/watch/viewers/${fileId}`)).json();
+            const data  = await (await fetch(`/watch/viewers/${fileId}`)).json();
             const panel = document.getElementById('viewerPanel');
             document.getElementById('viewerCount').textContent = data.count;
             if (data.count > 0) {
@@ -247,6 +322,8 @@ function initPlayer() {
 // /socket.io/ is Flask-SocketIO's transport namespace, NOT a static
 // file path — requesting socket.io.js from there returns 400.
 // Use local static file first, CDN as fallback.
+// mpegts.js is only injected for player_type == 'ts'; all other
+// types already have a <source> tag and don't need it.
 // ============================================================
 (function () {
     function inject(src, ok, fail) {
@@ -259,8 +336,8 @@ function initPlayer() {
     var SIO_CDN   = 'https://cdn.socket.io/4.7.5/socket.io.min.js';
 
     function afterSocketIO() {
-        {% if mimetype == 'video/mp2t' %}
-        // TS: also need mpegts.js before initialising the player
+        {% if player_type == 'ts' %}
+        // TS: also need mpegts.js before initialising the player.
         var MPEGTS_LOCAL = "{{ url_for('static', filename='mpegts.min.js') }}";
         var MPEGTS_CDN   = 'https://cdn.jsdelivr.net/npm/mpegts.js/dist/mpegts.min.js';
 
@@ -271,7 +348,7 @@ function initPlayer() {
             });
         });
         {% else %}
-        // Non-TS: socket.io is all we need
+        // All other playable types: socket.io is the only dependency.
         initPlayer();
         {% endif %}
     }
@@ -279,11 +356,12 @@ function initPlayer() {
     inject(SIO_LOCAL, afterSocketIO, function () {
         console.warn('socket.io.min.js not in /static/ — falling back to CDN');
         inject(SIO_CDN, afterSocketIO, function () {
-            console.error('socket.io failed to load from all sources. Watch Together will not work.');
+            console.error('socket.io failed to load. Watch Together will not work.');
         });
     });
 })();
 </script>
+{% endif %}
 
 </body>
 </html>
