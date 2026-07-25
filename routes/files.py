@@ -16,7 +16,7 @@ from utils import human_readable_size, STREAMABLE_EXTENSIONS, admin_required, lo
 files_bp = Blueprint('files', __name__)
 
 IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp', '.gif'}
-VIDEO_EXTENSIONS = {'.mp4', '.mkv', '.webm', '.ts', '.mov', '.avi', '.m4v'}
+VIDEO_EXTENSIONS = {'.mp4', '.mkv', '.webm', '.ts', '.mov', '.avi', '.m4v', '.wmv'}
 
 THUMBNAIL_DIR = '.thumbnails'
 FFMPEG_PATH   = shutil.which('ffmpeg')
@@ -35,10 +35,13 @@ MIME_TYPES = {
     '.mov':  'video/mp4',
     # TS — mpegts.js
     '.ts':   'video/mp2t',
-    # Unsupported video (correct MIME, player shows download prompt)
+    # Transcoded video — served via /transcode/ as fragmented MP4
     '.mkv':  'video/x-matroska',
     '.avi':  'video/x-msvideo',
     '.wmv':  'video/x-ms-wmv',
+    '.m4v':  'video/mp4',
+    # Animated images — rendered as <img> in the stream page
+    '.gif':  'image/gif',
     # Native audio
     '.mp3':  'audio/mpeg',
     '.flac': 'audio/flac',
@@ -347,12 +350,14 @@ def stream_page(file_id):
     ext      = os.path.splitext(file.original_name)[1].lower()
     mimetype = MIME_TYPES.get(ext, 'application/octet-stream')
 
-    if ext in PLAYER_NATIVE_VIDEO:
-        player_type = 'video'
+    if ext == '.gif':
+        player_type = 'gif'
     elif ext in PLAYER_TS_VIDEO:
         player_type = 'ts'
     elif ext in PLAYER_NATIVE_AUDIO:
         player_type = 'audio'
+    elif ext in PLAYER_NATIVE_VIDEO:
+        player_type = 'video'
     else:
         player_type = 'unsupported'
 
