@@ -181,7 +181,7 @@
                         <span class="menu-icon">✏</span> Rename
                     </button>
                     <button class="menu-item menu-item-danger"
-                            onclick="deleteFile({{ item.file_id }}, {{ item.name | tojson }})">
+                            onclick='deleteFile({{ item.file_id }}, {{ item.name | tojson }})'>
                         <span class="menu-icon">🗑</span> Delete
                     </button>
                     {% endif %}
