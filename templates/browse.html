@@ -342,9 +342,31 @@ function closeMenus() {
 
 document.addEventListener('click', closeMenus);
 
-function deleteFile(fileId, name) {
-    if (!confirm(`Delete '${name}'? This cannot be undone.`)) return;
+function opsConfirm(message, destructive = false) {
+    return new Promise(resolve => {
+        const backdrop = document.getElementById('ls-modal-backdrop');
+        const okBtn    = document.getElementById('ls-modal-ok');
+        const cancelBtn = document.getElementById('ls-modal-cancel');
+        document.getElementById('ls-modal-msg').textContent = message;
+        okBtn.className = destructive ? 'ops-btn ops-btn-danger' : 'ops-btn ops-btn-primary';
+        backdrop.style.display = 'flex';
+
+        function finish(result) {
+            backdrop.style.display = 'none';
+            okBtn.removeEventListener('click', onOk);
+            cancelBtn.removeEventListener('click', onCancel);
+            resolve(result);
+        }
+        function onOk()     { finish(true);  }
+        function onCancel() { finish(false); }
+        okBtn.addEventListener('click', onOk);
+        cancelBtn.addEventListener('click', onCancel);
+    });
+}
+
+async function deleteFile(fileId, name) {
     closeMenus();
+    if (!await opsConfirm(`Delete '${name}'? This cannot be undone.`, true)) return;
     document.getElementById('del-form-' + fileId).submit();
 }
 
@@ -393,6 +415,17 @@ document.getElementById('info-backdrop').addEventListener('click', function(e) {
     if (e.target === this) closeInfo();
 });
 </script>
+
+<!-- CUSTOM CONFIRM MODAL (shared style with dashboard) -->
+<div id="ls-modal-backdrop" class="ls-modal-backdrop" style="display:none;">
+    <div class="ls-modal">
+        <p class="ls-modal-msg" id="ls-modal-msg"></p>
+        <div class="ls-modal-actions">
+            <button class="ops-btn ops-btn-secondary" id="ls-modal-cancel">Cancel</button>
+            <button class="ops-btn ops-btn-danger"    id="ls-modal-ok">Delete</button>
+        </div>
+    </div>
+</div>
 
 </body>
 </html>
