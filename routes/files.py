@@ -53,7 +53,7 @@ MIME_TYPES = {
     '.oga':  'audio/ogg',
 }
 
-# Player routing
+SUBTITLE_EXTENSIONS = {'.srt', '.vtt', '.ass', '.ssa'}
 PLAYER_NATIVE_VIDEO = {'.mp4', '.webm', '.ogg', '.mov'}
 PLAYER_TS_VIDEO     = {'.ts'}
 PLAYER_NATIVE_AUDIO = {'.mp3', '.flac', '.wav', '.aac', '.m4a', '.m4b', '.opus', '.oga'}
@@ -344,6 +344,161 @@ def stream_file(file_id):
     return resp
 
 
+# ============================================================
+# SUBTITLE HELPERS  — zero-dependency, in-memory conversion
+# ============================================================
+
+def srt_to_vtt(srt_text: str) -> str:
+    """Convert SRT to WebVTT — only change is comma→dot in timestamps."""
+    vtt = re.sub(r'(\d{2}:\d{2}:\d{2}),(\d{3})', r'\1.\2', srt_text)
+    return 'WEBVTT\n\n' + vtt.strip()
+
+
+def ass_to_vtt(ass_text: str) -> str:
+    """
+    Convert ASS/SSA to WebVTT using pure regex/string parsing.
+    Extracts Dialogue lines from [Events], strips override tags,
+    and converts H:MM:SS.cc timestamps to HH:MM:SS.mmm.
+    """
+    def ass_ts(ts):
+        m = re.match(r'(\d+):(\d{2}):(\d{2})\.(\d{2})', ts)
+        if not m:
+            return ts
+        h, mi, s, cs = m.groups()
+        return f'{int(h):02d}:{mi}:{s}.{int(cs)*10:03d}'
+
+    cues         = []
+    in_events    = False
+    fmt_cols     = []
+
+    for line in ass_text.splitlines():
+        s = line.strip()
+        if s == '[Events]':
+            in_events = True
+            continue
+        if in_events and s.startswith('['):
+            break
+        if in_events and s.startswith('Format:'):
+            fmt_cols = [c.strip() for c in s[7:].split(',')]
+            continue
+        if in_events and s.startswith('Dialogue:') and fmt_cols:
+            parts = s[9:].split(',', len(fmt_cols) - 1)
+            if len(parts) < len(fmt_cols):
+                continue
+            row  = dict(zip(fmt_cols, parts))
+            text = re.sub(r'\{[^}]*\}', '', row.get('Text', ''))  # strip {tags}
+            text = text.replace('\\N', '\n').replace('\\n', '\n').strip()
+            start, end = row.get('Start', '').strip(), row.get('End', '').strip()
+            if start and end and text:
+                cues.append(f'{ass_ts(start)} --> {ass_ts(end)}\n{text}')
+
+    return 'WEBVTT\n\n' + '\n\n'.join(cues)
+
+
+def _get_related_subtitles(file):
+    """
+    Scan the file's directory for subtitle files whose base name matches
+    or extends the video's base name (e.g. Episode01.en.srt for Episode01.mp4).
+    Returns [{label, file_id}, …] sorted naturally.
+    """
+    upload_folder = current_app.config['UPLOAD_FOLDER']
+    stored        = file.stored_name.replace('\\', '/')
+    base_no_ext   = os.path.splitext(stored)[0]        # e.g. "Series/Ep01"
+    folder_rel    = os.path.dirname(stored)             # e.g. "Series" or ""
+    folder_abs    = os.path.join(upload_folder, folder_rel) if folder_rel else upload_folder
+
+    results = []
+    if not os.path.isdir(folder_abs):
+        return results
+
+    for entry in os.scandir(folder_abs):
+        if not entry.is_file():
+            continue
+        ext = os.path.splitext(entry.name)[1].lower()
+        if ext not in SUBTITLE_EXTENSIONS:
+            continue
+        rel          = (folder_rel + '/' + entry.name) if folder_rel else entry.name
+        sub_base     = os.path.splitext(rel)[0]
+        # Accept exact match or language-tagged variants (Ep01.en.srt, Ep01_eng.srt)
+        if sub_base != base_no_ext and \
+           not sub_base.startswith(base_no_ext + '.') and \
+           not sub_base.startswith(base_no_ext + '_'):
+            continue
+        db_file = _get_or_register(rel, entry.name, entry.stat().st_size)
+        results.append({'label': entry.name, 'file_id': db_file.id})
+
+    db.session.commit()
+    results.sort(key=lambda x: natural_sort_key(x['label']))
+    return results
+
+
+def _get_next_file(file):
+    """
+    Return the DB File for the next streamable file in the same directory
+    by natural sort order, or None if the current file is last.
+    """
+    upload_folder = current_app.config['UPLOAD_FOLDER']
+    stored        = file.stored_name.replace('\\', '/')
+    folder_rel    = os.path.dirname(stored)
+    folder_abs    = os.path.join(upload_folder, folder_rel) if folder_rel else upload_folder
+
+    if not os.path.isdir(folder_abs):
+        return None
+
+    try:
+        entries = sorted(
+            [e for e in os.scandir(folder_abs) if e.is_file()],
+            key=lambda e: natural_sort_key(e.name)
+        )
+    except PermissionError:
+        return None
+
+    streamable = [
+        e for e in entries
+        if os.path.splitext(e.name)[1].lower() in STREAMABLE_EXTENSIONS
+    ]
+
+    current_name = os.path.basename(stored)
+    for i, entry in enumerate(streamable):
+        if entry.name == current_name and i + 1 < len(streamable):
+            nxt     = streamable[i + 1]
+            nxt_rel = (folder_rel + '/' + nxt.name) if folder_rel else nxt.name
+            return File.query.filter_by(stored_name=nxt_rel).first()
+
+    return None
+
+
+@files_bp.route('/subtitle/<int:file_id>')
+def serve_subtitle(file_id):
+    """
+    Serve a subtitle file as WebVTT, converting SRT and ASS in-memory.
+    No external tools — pure string/regex processing.
+    """
+    file      = File.query.get_or_404(file_id)
+    file_path = os.path.join(current_app.config['UPLOAD_FOLDER'], file.stored_name)
+
+    if not os.path.exists(file_path):
+        abort(404)
+
+    ext = os.path.splitext(file.original_name)[1].lower()
+    if ext not in SUBTITLE_EXTENSIONS:
+        abort(400)
+
+    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+        content = f.read()
+
+    if ext == '.vtt':
+        vtt = content
+    elif ext == '.srt':
+        vtt = srt_to_vtt(content)
+    else:  # .ass / .ssa
+        vtt = ass_to_vtt(content)
+
+    resp = Response(vtt, mimetype='text/vtt')
+    resp.headers['Access-Control-Allow-Origin'] = '*'
+    return resp
+
+
 @files_bp.route('/stream_page/<int:file_id>')
 def stream_page(file_id):
     file     = File.query.get_or_404(file_id)
@@ -361,11 +516,18 @@ def stream_page(file_id):
     else:
         player_type = 'unsupported'
 
+    # Subtitle auto-detection and next-episode lookup — video types only
+    is_video         = player_type in ('video', 'ts')
+    server_subtitles = _get_related_subtitles(file) if is_video else []
+    next_file        = _get_next_file(file) if is_video or player_type == 'audio' else None
+
     return render_template('stream.html',
                            file_id=file_id,
                            file_name=file.original_name,
                            mimetype=mimetype,
                            player_type=player_type,
+                           server_subtitles=server_subtitles,
+                           next_file=next_file,
                            ext=ext)
 
 

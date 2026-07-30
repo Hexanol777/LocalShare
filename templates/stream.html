@@ -6,7 +6,7 @@
 
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <style>
-        /* ── GIF viewer ─────────────────────────────────────────── */
+        /* ── GIF viewer ──────────────────────────────────────────────── */
         .gif-display {
             display: block;
             max-width: 100%;
@@ -15,7 +15,7 @@
             margin: auto;
         }
 
-        /* ── Unsupported-format fallback card ────────────────────── */
+        /* ── Unsupported-format fallback card ────────────────────────── */
         .unsupported-wrap {
             display: flex;
             flex-direction: column;
@@ -26,10 +26,8 @@
             text-align: center;
             padding: 2rem;
         }
-        .unsupported-icon  { font-size: 3rem; }
         .unsupported-title { font-size: 1.2rem; font-weight: 600; color: #fff; margin: 0; }
         .unsupported-sub   { font-size: 0.9rem; color: #888; margin: 0; max-width: 420px; word-break: break-all; }
-        .unsupported-hint  { font-size: 0.82rem; color: #666; margin: 0; max-width: 420px; }
         .unsupported-dl {
             display: inline-block;
             margin-top: 8px;
@@ -42,6 +40,44 @@
             font-size: 0.9rem;
         }
         .unsupported-dl:hover { background: #1a5ae5; }
+
+        /* ── Subtitle controls ───────────────────────────────────────── */
+        .ctrl-separator {
+            width: 1px;
+            height: 18px;
+            background: rgba(255,255,255,0.15);
+            margin: 0 6px;
+            flex-shrink: 0;
+        }
+        .sub-load-btn {
+            cursor: pointer;
+            font-size: 0.78rem;
+            letter-spacing: 0.04em;
+            font-weight: 600;
+            padding: 5px 12px;
+            user-select: none;
+        }
+        .sub-status {
+            font-size: 0.8rem;
+            color: #888;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 260px;
+        }
+
+        /* ── Player-wrap drag-over highlight ─────────────────────────── */
+        .player-wrap.drag-over { outline: 2px dashed #2a6af5; outline-offset: -4px; }
+
+        /* ── Sync status dot ─────────────────────────────────────────── */
+        .sync-dot {
+            display: inline-block;
+            width: 7px; height: 7px;
+            border-radius: 50%;
+            background: #22c55e;
+            margin-right: 5px;
+            flex-shrink: 0;
+        }
     </style>
 </head>
 <body>
@@ -50,66 +86,83 @@
 <div class="topbar">
     <a href="{{ url_for('files.browse') }}">← Browse</a>
     <span class="topbar-title">{{ file_name }}</span>
+    {% if next_file %}
+    <a class="nav-pill" href="{{ url_for('files.stream_page', file_id=next_file.id) }}">Next →</a>
+    {% else %}
     <span></span>
+    {% endif %}
 </div>
 
-<!-- ============================================================
-     PLAYER  — rendered based on player_type, not raw mimetype.
-     player_type is resolved server-side in stream_page() after
-     probing the actual video codec so the right path is chosen
-     before a single byte is sent to the browser.
-     ============================================================ -->
-<div class="player-wrap">
+<!-- ================================================================
+     PLAYER  — branched on player_type resolved server-side.
+     ================================================================ -->
+<div class="player-wrap" id="playerWrap">
 
     {% if player_type == 'gif' %}
-    {# Animated GIF — browsers play these natively as <img>, not <video>. #}
     <img class="gif-display"
          src="{{ url_for('files.stream_file', file_id=file_id) }}"
          alt="{{ file_name }}">
 
     {% elif player_type == 'unsupported' %}
-    {# Format the browser cannot play — offer a direct download instead. #}
     <div class="unsupported-wrap">
-        <div class="unsupported-icon">⚠️</div>
-        <p class="unsupported-title">This format can't be played in the browser</p>
+        <p class="unsupported-title">This format cannot be played in the browser</p>
         <p class="unsupported-sub">{{ file_name }}</p>
         <a class="unsupported-dl"
            href="{{ url_for('files.download_file', file_id=file_id) }}">
-            ⬇ Download file
+            Download file
         </a>
     </div>
 
     {% else %}
     {#
        video / audio / ts — all use a <video> element.
-         ts    → no <source>; mpegts.js attaches it in JS.
-         video / audio → direct /stream/<id> with the file's own MIME type.
+         ts    → mpegts.js injects the source in JS; no <source> tag.
+         video / audio → direct byte-range stream with own MIME type.
+       Server-detected subtitle tracks are injected as <track> elements;
+       they are converted to WebVTT on the fly by /subtitle/<id>.
     #}
     <video id="videoPlayer" controls>
         {% if player_type == 'ts' %}
-            {# mpegts.js injects the source after load — no <source> tag here. #}
+            {# mpegts.js attaches the source after load #}
         {% else %}
             <source src="{{ url_for('files.stream_file', file_id=file_id) }}"
                     type="{{ mimetype }}">
         {% endif %}
+
+        {% for sub in server_subtitles %}
+        <track kind="subtitles"
+               label="{{ sub.label }}"
+               src="{{ url_for('files.serve_subtitle', file_id=sub.file_id) }}"
+               {% if loop.first %}default{% endif %}>
+        {% endfor %}
     </video>
     {% endif %}
 
 </div><!-- /.player-wrap -->
 
 {% if player_type not in ('gif', 'unsupported') %}
-<!-- CONTROLS — only rendered for playable types -->
+<!-- WATCH TOGETHER CONTROLS + SUBTITLE BUTTON -->
 <div class="stream-controls">
-    <button class="ctrl-btn" id="playBtn">▶ Play</button>
-    <button class="ctrl-btn" id="pauseBtn">⏸ Pause</button>
-    <button class="ctrl-btn" id="syncBtn">🔄 Sync</button>
-    <span class="sync-status" id="syncStatus">🟢 Synced</span>
+    <button class="ctrl-btn" id="playBtn">&#9654; Play</button>
+    <button class="ctrl-btn" id="pauseBtn">&#9646; Pause</button>
+    <button class="ctrl-btn" id="syncBtn">&#8635; Sync</button>
+    <span class="sync-status" id="syncStatus"><span class="sync-dot"></span>Synced</span>
     <span class="latency-badge" id="latencyInfo"></span>
+
+    <span class="ctrl-separator"></span>
+
+    <label for="subFileInput" class="ctrl-btn sub-load-btn" title="Load a local subtitle file (.srt / .vtt / .ass)">CC</label>
+    <input type="file" id="subFileInput" accept=".srt,.vtt,.ass,.ssa" style="display:none;">
+    <span class="sub-status" id="subStatus">
+        {%- if server_subtitles -%}
+            {{ server_subtitles|length }} subtitle track{{ 's' if server_subtitles|length > 1 }} detected
+        {%- endif -%}
+    </span>
 </div>
 
 <!-- VIEWER PANEL -->
 <div class="viewer-panel" id="viewerPanel" style="display:none;">
-    <h4>👥 Viewers (<span id="viewerCount">0</span>)</h4>
+    <h4>Viewers (<span id="viewerCount">0</span>)</h4>
     <div id="viewerList" class="viewer-list">
         <span style="color:#555;">Loading...</span>
     </div>
@@ -119,8 +172,7 @@
 {% if player_type not in ('gif', 'unsupported') %}
 <script>
 // ============================================================
-// initPlayer — defined before the async loader IIFE below so
-// mpegts.js can call it as its onload callback without a race.
+// initPlayer — must be defined before the async loader IIFE.
 // ============================================================
 function initPlayer() {
     const video  = document.getElementById('videoPlayer');
@@ -128,7 +180,6 @@ function initPlayer() {
     const socket = io();
 
     // ---------- TS: wire up mpegts.js ----------
-    // Only compiled in for .ts files; all other types have a <source> tag.
     {% if player_type == 'ts' %}
     if (typeof mpegts !== 'undefined' && mpegts.getFeatureList().mseLivePlayback) {
         const player = mpegts.createPlayer({
@@ -160,6 +211,14 @@ function initPlayer() {
     const HARD_DRIFT_PAUSED  = 0.15;
     const HEARTBEAT_MS       = 4000;
 
+    const statusEl = document.getElementById('syncStatus');
+
+    function setStatus(text, dotColor) {
+        const dot = statusEl.querySelector('.sync-dot');
+        if (dot) dot.style.background = dotColor || '#22c55e';
+        statusEl.lastChild.textContent = text;
+    }
+
     function getTargetPosition(state) {
         const elapsed = (state.server_now + serverTimeOffset) - state.updated_at;
         return state.playing ? state.position + elapsed : state.position;
@@ -187,8 +246,6 @@ function initPlayer() {
         let needsHard = Math.abs(diff) > hardThreshold;
         if (state.playing && Math.abs(diff) < 0.5) needsHard = false;
 
-        const statusEl = document.getElementById('syncStatus');
-
         if (needsHard) {
             suppressEvents = true;
             isCorrecting   = true;
@@ -197,19 +254,19 @@ function initPlayer() {
                 video.removeEventListener('seeked', onSeeked);
                 clearTimeout(fallback);
                 isCorrecting = suppressEvents = false;
-                statusEl.textContent = '🟢 Synced';
+                setStatus('Synced', '#22c55e');
             }
             const fallback = setTimeout(onSeeked, 1500);
             video.addEventListener('seeked', onSeeked);
 
-            video.currentTime    = Math.max(0, target);
-            statusEl.textContent = `🎬 Hard sync (${diff.toFixed(2)}s)`;
+            video.currentTime = Math.max(0, target);
+            setStatus(`Seeking (${diff.toFixed(2)}s)`, '#f59e0b');
         } else {
             applyPlaybackRateCorrection(diff);
             if (Math.abs(diff) > 0.1) {
-                statusEl.textContent = `🎯 Drift ${diff.toFixed(2)}s`;
-            } else if (statusEl.textContent.includes('Drift')) {
-                statusEl.textContent = '🟢 Synced';
+                setStatus(`Drift ${diff.toFixed(2)}s`, '#f59e0b');
+            } else if (statusEl.lastChild.textContent.includes('Drift')) {
+                setStatus('Synced', '#22c55e');
             }
         }
 
@@ -230,7 +287,7 @@ function initPlayer() {
         const rawOffset  = state.server_now - (Date.now() / 1000);
         serverTimeOffset = serverTimeOffset * 0.9 + rawOffset * 0.1;
         document.getElementById('latencyInfo').textContent =
-            `📡 ${Math.round(Math.abs(rawOffset) * 2000)}ms`;
+            `${Math.round(Math.abs(rawOffset) * 2000)} ms`;
         applyState(state);
     });
 
@@ -278,9 +335,8 @@ function initPlayer() {
     document.getElementById('syncBtn').addEventListener('click',  () => {
         if (syncing || isCorrecting) return;
         sendAction('seek', video.currentTime);
-        const s = document.getElementById('syncStatus');
-        s.textContent = '🔄 Force sync sent';
-        setTimeout(() => { if (!syncing) s.textContent = '🟢 Synced'; }, 1000);
+        setStatus('Sync sent', '#3b82f6');
+        setTimeout(() => { if (!syncing) setStatus('Synced', '#22c55e'); }, 1000);
     });
 
     // ---------- Viewer list ----------
@@ -293,7 +349,7 @@ function initPlayer() {
                 panel.style.display = 'block';
                 document.getElementById('viewerList').innerHTML = data.viewers.map(v => {
                     const ip = v.ip.replace('::ffff:', '').replace('::1', 'localhost');
-                    return `<div class="viewer-tag"><span class="ip">${ip}</span><span class="ping">📡 ${v.latency}ms</span></div>`;
+                    return `<div class="viewer-tag"><span class="ip">${ip}</span><span class="ping">${v.latency} ms</span></div>`;
                 }).join('');
             } else {
                 panel.style.display = 'none';
@@ -309,6 +365,124 @@ function initPlayer() {
         clearInterval(heartbeatInterval);
         video.playbackRate = 1.0;
     });
+
+    // ============================================================
+    // SUBTITLES
+    // ============================================================
+
+    const subStatus    = document.getElementById('subStatus');
+    const subFileInput = document.getElementById('subFileInput');
+    const playerWrap   = document.getElementById('playerWrap');
+
+    /**
+     * Convert raw subtitle text to a WebVTT Blob URL entirely in the browser.
+     * SRT: replace comma decimal separator in timestamps.
+     * ASS/SSA: extract Dialogue lines, strip override tags, fix timestamps.
+     * VTT: use as-is.
+     */
+    function parseToVttBlob(text, ext) {
+        let vtt;
+        if (ext === 'vtt') {
+            vtt = text;
+        } else if (ext === 'srt') {
+            vtt = 'WEBVTT\n\n' + text.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2').trim();
+        } else {
+            // ASS / SSA — extract Events section
+            const lines   = text.split(/\r?\n/);
+            const cues    = [];
+            let inEvents  = false;
+            let fmtCols   = [];
+
+            const assTs = ts => {
+                const m = ts.match(/(\d+):(\d{2}):(\d{2})\.(\d{2})/);
+                if (!m) return ts;
+                const ms = String(parseInt(m[4]) * 10).padStart(3, '0');
+                return `${String(parseInt(m[1])).padStart(2,'0')}:${m[2]}:${m[3]}.${ms}`;
+            };
+
+            for (const line of lines) {
+                const s = line.trim();
+                if (s === '[Events]') { inEvents = true; continue; }
+                if (inEvents && s.startsWith('[')) break;
+                if (inEvents && s.startsWith('Format:')) {
+                    fmtCols = s.slice(7).split(',').map(c => c.trim());
+                    continue;
+                }
+                if (inEvents && s.startsWith('Dialogue:') && fmtCols.length) {
+                    const parts = s.slice(9).split(',', fmtCols.length);
+                    if (parts.length < fmtCols.length) continue;
+                    const row  = Object.fromEntries(fmtCols.map((k, i) => [k, parts[i]]));
+                    const body = (row.Text || '').replace(/\{[^}]*\}/g, '')
+                                                 .replace(/\\N/g, '\n').replace(/\\n/g, '\n').trim();
+                    const s1   = (row.Start || '').trim();
+                    const e1   = (row.End   || '').trim();
+                    if (s1 && e1 && body) cues.push(`${assTs(s1)} --> ${assTs(e1)}\n${body}`);
+                }
+            }
+            vtt = 'WEBVTT\n\n' + cues.join('\n\n');
+        }
+        return URL.createObjectURL(new Blob([vtt], { type: 'text/vtt' }));
+    }
+
+    function attachSubtitleTrack(file) {
+        const ext    = file.name.split('.').pop().toLowerCase();
+        const reader = new FileReader();
+
+        reader.onload = e => {
+            // Revoke any previous local blob URL to avoid memory leaks
+            if (attachSubtitleTrack._lastBlob) {
+                URL.revokeObjectURL(attachSubtitleTrack._lastBlob);
+            }
+
+            const blobUrl = parseToVttBlob(e.target.result, ext);
+            attachSubtitleTrack._lastBlob = blobUrl;
+
+            // Remove any previously injected local track
+            const old = video.querySelector('track[data-local]');
+            if (old) old.remove();
+
+            const track      = document.createElement('track');
+            track.kind       = 'subtitles';
+            track.label      = file.name;
+            track.srclang    = 'und';
+            track.src        = blobUrl;
+            track.dataset.local = '1';
+            video.appendChild(track);
+
+            // Disable all other tracks, activate the new one
+            setTimeout(() => {
+                for (const t of video.textTracks) t.mode = 'disabled';
+                track.track.mode = 'showing';
+                subStatus.textContent = `Subtitles: ${file.name}`;
+            }, 100);
+        };
+
+        reader.readAsText(file);
+    }
+
+    // File picker
+    subFileInput.addEventListener('change', e => {
+        if (e.target.files.length) attachSubtitleTrack(e.target.files[0]);
+        e.target.value = '';   // reset so the same file can be re-selected
+    });
+
+    // Drag and drop onto the player area
+    playerWrap.addEventListener('dragover', e => {
+        e.preventDefault();
+        const ext = (e.dataTransfer.items[0]?.getAsFile()?.name || '').split('.').pop().toLowerCase();
+        if (['srt','vtt','ass','ssa'].includes(ext) || e.dataTransfer.items.length) {
+            playerWrap.classList.add('drag-over');
+        }
+    });
+    playerWrap.addEventListener('dragleave', () => playerWrap.classList.remove('drag-over'));
+    playerWrap.addEventListener('drop', e => {
+        e.preventDefault();
+        playerWrap.classList.remove('drag-over');
+        const file = e.dataTransfer.files[0];
+        if (!file) return;
+        const ext = file.name.split('.').pop().toLowerCase();
+        if (['srt','vtt','ass','ssa'].includes(ext)) attachSubtitleTrack(file);
+    });
 }
 // ============================================================
 // END initPlayer
@@ -316,14 +490,7 @@ function initPlayer() {
 
 
 // ============================================================
-// LOADER CHAIN
-// socket.io must be fully loaded before initPlayer() runs because
-// initPlayer() calls io() on its first line.
-// /socket.io/ is Flask-SocketIO's transport namespace, NOT a static
-// file path — requesting socket.io.js from there returns 400.
-// Use local static file first, CDN as fallback.
-// mpegts.js is only injected for player_type == 'ts'; all other
-// types already have a <source> tag and don't need it.
+// LOADER CHAIN — socket.io first, then mpegts.js for TS only.
 // ============================================================
 (function () {
     function inject(src, ok, fail) {
@@ -337,10 +504,8 @@ function initPlayer() {
 
     function afterSocketIO() {
         {% if player_type == 'ts' %}
-        // TS: also need mpegts.js before initialising the player.
         var MPEGTS_LOCAL = "{{ url_for('static', filename='mpegts.min.js') }}";
         var MPEGTS_CDN   = 'https://cdn.jsdelivr.net/npm/mpegts.js/dist/mpegts.min.js';
-
         inject(MPEGTS_LOCAL, initPlayer, function () {
             console.warn('mpegts.js not in /static/ — falling back to CDN');
             inject(MPEGTS_CDN, initPlayer, function () {
@@ -348,7 +513,6 @@ function initPlayer() {
             });
         });
         {% else %}
-        // All other playable types: socket.io is the only dependency.
         initPlayer();
         {% endif %}
     }
