@@ -3,6 +3,7 @@ import sys
 import secrets
 import logging
 from datetime import timedelta
+import argparse
 
 from flask import Flask
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -18,8 +19,14 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# CLI Argument Parsing & Safety Flag
-custom_folder = sys.argv[1] if len(sys.argv) > 1 else None
+# Argument Parsing
+parser = argparse.ArgumentParser(description='LocalShare Flask App')
+parser.add_argument('--port', '-p', type=int, default=80, help='Port to run the server on')
+parser.add_argument('folder', nargs='?', default=None, help='Custom upload folder')
+args = parser.parse_args()
+
+custom_folder = args.folder
+port = args.port
 
 if custom_folder:
     if not os.path.isdir(custom_folder):
@@ -139,7 +146,7 @@ if __name__ == '__main__':
     import socket as _socket
     s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
     try:
-        s.connect(('8.8.8.8', 80))
+        s.connect(('8.8.8.8', port))
         local_ip = s.getsockname()[0]
     except Exception:
         local_ip = '127.0.0.1'
@@ -147,12 +154,12 @@ if __name__ == '__main__':
         s.close()
 
     # --- TRICK mDNS USING ZEROCONF ---
-    zeroconf, service_info, machine_ip = start_virtual_mdns(hostname="share", port=80)
+    zeroconf, service_info, machine_ip = start_virtual_mdns(hostname="share", port=port)
 
-    print("Press CTRL+C to quit")
+    print(f"Press CTRL+C to quit. Running on port {port}")
 
     try:
-        socketio.run(app, host='0.0.0.0', port=80)
+        socketio.run(app, host='0.0.0.0', port=port)
     finally:
         logger.info("De-registering broadcast parameters from local subnet routing tables...")
         zeroconf.unregister_service(service_info)
