@@ -146,7 +146,7 @@ if __name__ == '__main__':
     import socket as _socket
     s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
     try:
-        s.connect(('8.8.8.8', 8080))
+        s.connect(('8.8.8.8', port))
         local_ip = s.getsockname()[0]
     except Exception:
         local_ip = '127.0.0.1'
