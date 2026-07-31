@@ -1,0 +1,33 @@
+# Version control 
+.git
+.gitignore
+
+# Python cache
+__pycache__
+*.py[cod]
+*.pyo
+.pytest_cache
+
+# Virtual environments
+.venv
+venv
+env
+
+# Runtime data (should come from volumes, not the image)
+instance/
+uploads/
+
+# Development and editor files
+.env
+*.env
+.DS_Store
+Thumbs.db
+.idea
+.vscode
+*.swp
+*.swo
+
+# Documentation assets (not needed at runtime)
+docs/
+*.md
+!requirements.txt

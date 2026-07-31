@@ -1,0 +1,44 @@
+# To serve a specific directory instead of the default uploads folder:
+#   DATA_DIR=/path/to/your/media docker compose up -d
+
+services:
+  localshare:
+    build: .
+    image: localshare:latest
+    container_name: localshare
+
+    ports:
+      - "80:80"
+
+    # Binding to port 80 normally requires root. NET_BIND_SERVICE grants
+    # that specific privilege to the non-root container user without giving it full root access.
+    cap_add:
+      - NET_BIND_SERVICE
+
+    # Set these before running, or create a .env file in the same directory.
+    environment:
+      SECRET_KEY: ${SECRET_KEY:-}
+
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+
+    volumes:
+      - localshare-db:/app/instance
+
+      # Media directory — bind mount your actual content here.
+      # Defaults to ./uploads (created next to this file) when DATA_DIR is unset.
+      # Override: DATA_DIR=/mnt/my-nas/media docker compose up -d
+      - ${DATA_DIR:-./uploads}:/app/uploads
+
+    restart: unless-stopped
+
+    # Docker will mark the container unhealthy if the app stops responding.
+    # Useful when this is behind a reverse proxy (nginx, Caddy, Traefik).
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:80')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  localshare-db:
