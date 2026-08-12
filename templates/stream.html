@@ -49,22 +49,84 @@
             margin: 0 6px;
             flex-shrink: 0;
         }
-        .sub-load-btn {
-            cursor: pointer;
-            font-size: 0.78rem;
-            letter-spacing: 0.04em;
-            font-weight: 600;
-            padding: 5px 12px;
-            user-select: none;
-        }
         .sub-status {
             font-size: 0.8rem;
             color: #888;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
-            max-width: 260px;
+            max-width: 220px;
         }
+
+        /* ── Track selector (subtitles + audio) ──────────────────────── */
+        .track-wrap { position: relative; }
+
+        .track-btn {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            cursor: pointer;
+            font-size: 0.78rem;
+            letter-spacing: 0.04em;
+            font-weight: 600;
+            padding: 5px 10px;
+            user-select: none;
+        }
+        .track-btn.active { color: #59c1ff; border-color: #59c1ff; }
+
+        .track-chevron {
+            font-size: 0.6rem;
+            display: inline-block;
+            transition: transform 120ms ease;
+            opacity: 0.7;
+        }
+        .track-btn.open .track-chevron { transform: rotate(180deg); }
+
+        .track-dropdown {
+            position: absolute;
+            bottom: calc(100% + 8px);
+            left: 0;
+            min-width: 172px;
+            background: #1b1f24;
+            border: 1px solid #2c3440;
+            border-radius: 8px;
+            z-index: 300;
+            overflow: hidden;
+            box-shadow: 0 -6px 24px rgba(0,0,0,0.55);
+            /* Animation — opens upward from the button */
+            transform-origin: bottom center;
+            transform: scaleY(0);
+            opacity: 0;
+            pointer-events: none;
+            transition: transform 120ms ease, opacity 120ms ease;
+        }
+        .track-dropdown.open {
+            transform: scaleY(1);
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .track-option {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            width: 100%;
+            padding: 8px 14px;
+            background: none;
+            border: none;
+            color: #9aa4b2;
+            font-size: 0.83rem;
+            text-align: left;
+            cursor: pointer;
+            box-sizing: border-box;
+            white-space: nowrap;
+            transition: background 0.1s, color 0.1s;
+        }
+        .track-option:hover  { background: rgba(255,255,255,0.04); color: #e6e6e6; }
+        .track-option.active { color: #59c1ff; }
+        .track-option .track-check { font-size: 0.7rem; opacity: 0.9; margin-left: 10px; }
+
+        .track-divider { height: 1px; background: #2c3440; margin: 3px 0; }
 
         /* ── Player-wrap drag-over highlight ─────────────────────────── */
         .player-wrap.drag-over { outline: 2px dashed #2a6af5; outline-offset: -4px; }
@@ -151,11 +213,26 @@
 
     <span class="ctrl-separator"></span>
 
-    <label for="subFileInput" class="ctrl-btn sub-load-btn" title="Load a local subtitle file (.srt / .vtt / .ass)">CC</label>
+    <!-- Subtitle track selector -->
+    <div class="track-wrap" id="subWrap">
+        <button class="ctrl-btn track-btn" id="subBtn" title="Subtitles">
+            CC <span class="track-chevron">&#9660;</span>
+        </button>
+        <div class="track-dropdown" id="subDropdown"></div>
+    </div>
     <input type="file" id="subFileInput" accept=".srt,.vtt,.ass,.ssa" style="display:none;">
+
+    <!-- Audio track selector — rendered only if browser exposes multiple audio tracks -->
+    <div class="track-wrap" id="audioWrap" style="display:none;">
+        <button class="ctrl-btn track-btn" id="audioBtn" title="Audio track">
+            Audio <span class="track-chevron">&#9660;</span>
+        </button>
+        <div class="track-dropdown" id="audioDropdown"></div>
+    </div>
+
     <span class="sub-status" id="subStatus">
         {%- if server_subtitles -%}
-            {{ server_subtitles|length }} subtitle track{{ 's' if server_subtitles|length > 1 }} detected
+            {{ server_subtitles|length }} subtitle track{{ 's' if server_subtitles|length > 1 }} available
         {%- endif -%}
     </span>
 </div>
@@ -367,19 +444,152 @@ function initPlayer() {
     });
 
     // ============================================================
-    // SUBTITLES
+    // TRACK SELECTORS  — subtitles + audio
     // ============================================================
 
+    const subBtn       = document.getElementById('subBtn');
+    const subDropdown  = document.getElementById('subDropdown');
     const subStatus    = document.getElementById('subStatus');
     const subFileInput = document.getElementById('subFileInput');
+    const audioWrap    = document.getElementById('audioWrap');
+    const audioBtn     = document.getElementById('audioBtn');
+    const audioDropdown = document.getElementById('audioDropdown');
     const playerWrap   = document.getElementById('playerWrap');
 
-    /**
-     * Convert raw subtitle text to a WebVTT Blob URL entirely in the browser.
-     * SRT: replace comma decimal separator in timestamps.
-     * ASS/SSA: extract Dialogue lines, strip override tags, fix timestamps.
-     * VTT: use as-is.
-     */
+    // ── Shared open / close ──────────────────────────────────────
+
+    function openDrop(btn, dropdown) {
+        const alreadyOpen = dropdown.classList.contains('open');
+        // Close all open dropdowns first
+        document.querySelectorAll('.track-dropdown.open').forEach(d => d.classList.remove('open'));
+        document.querySelectorAll('.track-btn.open').forEach(b => b.classList.remove('open'));
+        if (!alreadyOpen) {
+            dropdown.classList.add('open');
+            btn.classList.add('open');
+        }
+    }
+
+    function closeAllDrops() {
+        document.querySelectorAll('.track-dropdown.open').forEach(d => d.classList.remove('open'));
+        document.querySelectorAll('.track-btn.open').forEach(b => b.classList.remove('open'));
+    }
+
+    document.addEventListener('click', closeAllDrops);
+
+    // ── Subtitle dropdown ────────────────────────────────────────
+
+    function makeDivider() {
+        const d = document.createElement('div');
+        d.className = 'track-divider';
+        return d;
+    }
+
+    function buildSubMenu() {
+        subDropdown.innerHTML = '';
+
+        const tracks    = Array.from(video.textTracks);
+        const activeIdx = tracks.findIndex(t => t.mode === 'showing');
+
+        // "Off" row
+        const off = document.createElement('button');
+        off.className = 'track-option' + (activeIdx === -1 ? ' active' : '');
+        off.innerHTML = 'Off' + (activeIdx === -1 ? '<span class="track-check">&#10003;</span>' : '');
+        off.addEventListener('click', e => {
+            e.stopPropagation();
+            tracks.forEach(t => { t.mode = 'disabled'; });
+            subBtn.classList.remove('active');
+            subStatus.textContent = '';
+            closeAllDrops();
+            buildSubMenu();
+        });
+        subDropdown.appendChild(off);
+
+        // Track rows
+        if (tracks.length) {
+            subDropdown.appendChild(makeDivider());
+            tracks.forEach((track, i) => {
+                const isActive = track.mode === 'showing';
+                const opt = document.createElement('button');
+                opt.className = 'track-option' + (isActive ? ' active' : '');
+                const label = track.label || `Track ${i + 1}`;
+                opt.innerHTML = label + (isActive ? '<span class="track-check">&#10003;</span>' : '');
+                opt.addEventListener('click', e => {
+                    e.stopPropagation();
+                    tracks.forEach(t => { t.mode = 'disabled'; });
+                    track.mode = 'showing';
+                    subBtn.classList.add('active');
+                    subStatus.textContent = label;
+                    closeAllDrops();
+                    buildSubMenu();
+                });
+                subDropdown.appendChild(opt);
+            });
+        }
+
+        // Divider + "Load file…" always at the bottom
+        subDropdown.appendChild(makeDivider());
+        const loadOpt = document.createElement('label');
+        loadOpt.className = 'track-option';
+        loadOpt.htmlFor   = 'subFileInput';
+        loadOpt.style.cursor = 'pointer';
+        loadOpt.textContent  = 'Load file…';
+        subDropdown.appendChild(loadOpt);
+    }
+
+    subBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        buildSubMenu();
+        openDrop(subBtn, subDropdown);
+    });
+
+    // Reflect initial state (server tracks may already have one active via `default`)
+    function syncSubBtnState() {
+        const active = Array.from(video.textTracks).find(t => t.mode === 'showing');
+        if (active) {
+            subBtn.classList.add('active');
+            subStatus.textContent = active.label || 'Subtitles on';
+        }
+    }
+    video.addEventListener('loadedmetadata', syncSubBtnState);
+    if (video.readyState >= 1) syncSubBtnState();
+
+    // ── Audio dropdown ───────────────────────────────────────────
+
+    function buildAudioMenu() {
+        audioDropdown.innerHTML = '';
+        Array.from(video.audioTracks).forEach((track, i) => {
+            const opt = document.createElement('button');
+            opt.className = 'track-option' + (track.enabled ? ' active' : '');
+            const label = track.label || track.language || `Track ${i + 1}`;
+            opt.innerHTML = label + (track.enabled ? '<span class="track-check">&#10003;</span>' : '');
+            opt.addEventListener('click', e => {
+                e.stopPropagation();
+                Array.from(video.audioTracks).forEach(t => { t.enabled = false; });
+                track.enabled = true;
+                closeAllDrops();
+                buildAudioMenu();
+            });
+            audioDropdown.appendChild(opt);
+        });
+    }
+
+    audioBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        buildAudioMenu();
+        openDrop(audioBtn, audioDropdown);
+    });
+
+    function initAudioTracks() {
+        const tracks = video.audioTracks;
+        if (tracks && tracks.length > 1) {
+            audioWrap.style.display = '';
+        }
+    }
+    video.addEventListener('loadedmetadata', initAudioTracks);
+    if (video.readyState >= 1) initAudioTracks();
+
+    // ── Local subtitle file ingestion ────────────────────────────
+
     function parseToVttBlob(text, ext) {
         let vtt;
         if (ext === 'vtt') {
@@ -388,25 +598,22 @@ function initPlayer() {
             vtt = 'WEBVTT\n\n' + text.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2').trim();
         } else {
             // ASS / SSA — extract Events section
-            const lines   = text.split(/\r?\n/);
-            const cues    = [];
-            let inEvents  = false;
-            let fmtCols   = [];
-
-            const assTs = ts => {
+            const lines  = text.split(/\r?\n/);
+            const cues   = [];
+            let inEvents = false;
+            let fmtCols  = [];
+            const assTs  = ts => {
                 const m = ts.match(/(\d+):(\d{2}):(\d{2})\.(\d{2})/);
                 if (!m) return ts;
                 const ms = String(parseInt(m[4]) * 10).padStart(3, '0');
                 return `${String(parseInt(m[1])).padStart(2,'0')}:${m[2]}:${m[3]}.${ms}`;
             };
-
             for (const line of lines) {
                 const s = line.trim();
                 if (s === '[Events]') { inEvents = true; continue; }
                 if (inEvents && s.startsWith('[')) break;
                 if (inEvents && s.startsWith('Format:')) {
-                    fmtCols = s.slice(7).split(',').map(c => c.trim());
-                    continue;
+                    fmtCols = s.slice(7).split(',').map(c => c.trim()); continue;
                 }
                 if (inEvents && s.startsWith('Dialogue:') && fmtCols.length) {
                     const parts = s.slice(9).split(',', fmtCols.length);
@@ -414,8 +621,7 @@ function initPlayer() {
                     const row  = Object.fromEntries(fmtCols.map((k, i) => [k, parts[i]]));
                     const body = (row.Text || '').replace(/\{[^}]*\}/g, '')
                                                  .replace(/\\N/g, '\n').replace(/\\n/g, '\n').trim();
-                    const s1   = (row.Start || '').trim();
-                    const e1   = (row.End   || '').trim();
+                    const s1 = (row.Start || '').trim(), e1 = (row.End || '').trim();
                     if (s1 && e1 && body) cues.push(`${assTs(s1)} --> ${assTs(e1)}\n${body}`);
                 }
             }
@@ -427,52 +633,43 @@ function initPlayer() {
     function attachSubtitleTrack(file) {
         const ext    = file.name.split('.').pop().toLowerCase();
         const reader = new FileReader();
-
         reader.onload = e => {
-            // Revoke any previous local blob URL to avoid memory leaks
-            if (attachSubtitleTrack._lastBlob) {
-                URL.revokeObjectURL(attachSubtitleTrack._lastBlob);
-            }
-
+            if (attachSubtitleTrack._lastBlob) URL.revokeObjectURL(attachSubtitleTrack._lastBlob);
             const blobUrl = parseToVttBlob(e.target.result, ext);
             attachSubtitleTrack._lastBlob = blobUrl;
 
-            // Remove any previously injected local track
             const old = video.querySelector('track[data-local]');
             if (old) old.remove();
 
-            const track      = document.createElement('track');
-            track.kind       = 'subtitles';
-            track.label      = file.name;
-            track.srclang    = 'und';
-            track.src        = blobUrl;
+            const track         = document.createElement('track');
+            track.kind          = 'subtitles';
+            track.label         = file.name;
+            track.srclang       = 'und';
+            track.src           = blobUrl;
             track.dataset.local = '1';
             video.appendChild(track);
 
-            // Disable all other tracks, activate the new one
             setTimeout(() => {
-                for (const t of video.textTracks) t.mode = 'disabled';
+                Array.from(video.textTracks).forEach(t => { t.mode = 'disabled'; });
                 track.track.mode = 'showing';
-                subStatus.textContent = `Subtitles: ${file.name}`;
+                subBtn.classList.add('active');
+                subStatus.textContent = file.name;
+                buildSubMenu();  // refresh dropdown with the new local track
             }, 100);
         };
-
         reader.readAsText(file);
     }
 
-    // File picker
     subFileInput.addEventListener('change', e => {
         if (e.target.files.length) attachSubtitleTrack(e.target.files[0]);
-        e.target.value = '';   // reset so the same file can be re-selected
+        e.target.value = '';
     });
 
-    // Drag and drop onto the player area
+    // ── Drag-and-drop subtitle onto player ───────────────────────
+
     playerWrap.addEventListener('dragover', e => {
         e.preventDefault();
-        const ext = (e.dataTransfer.items[0]?.getAsFile()?.name || '').split('.').pop().toLowerCase();
-        if (['srt','vtt','ass','ssa'].includes(ext) || e.dataTransfer.items.length) {
-            playerWrap.classList.add('drag-over');
-        }
+        if (e.dataTransfer.items.length) playerWrap.classList.add('drag-over');
     });
     playerWrap.addEventListener('dragleave', () => playerWrap.classList.remove('drag-over'));
     playerWrap.addEventListener('drop', e => {
