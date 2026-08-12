@@ -6,13 +6,20 @@
     <title>LocalShare</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <style>
+        /* ── Search + sort bar ───────────────────────────────────────── */
+        .search-bar-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
         .search-wrap {
             position: relative;
-            margin-bottom: 12px;
+            flex: 1;
         }
         #dir-search {
             width: 100%;
-            padding: 8px 36px 8px 12px;
+            padding: 8px 34px 8px 12px;
             background: #111315;
             border: 1px solid #2c3440;
             border-radius: 8px;
@@ -34,10 +41,10 @@
             cursor: pointer;
             font-size: 0.75rem;
             color: #9aa4b2;
-            line-height: 1;
             padding: 2px 4px;
             border-radius: 3px;
             transition: color 0.15s;
+            line-height: 1;
         }
         .search-clear:hover { color: #e6e6e6; }
         .search-hidden { display: none !important; }
@@ -47,6 +54,51 @@
             color: #9aa4b2;
             font-size: 0.88rem;
         }
+
+        /* ── Sort control ────────────────────────────────────────────── */
+        .sort-wrap { position: relative; flex-shrink: 0; }
+        .sort-btn {
+            white-space: nowrap;
+            background: #111315;
+            border: 1px solid #2c3440;
+            border-radius: 8px;
+            color: #9aa4b2;
+            font-size: 0.82rem;
+            padding: 8px 12px;
+            cursor: pointer;
+            transition: border-color 0.15s, color 0.15s;
+        }
+        .sort-btn:hover { border-color: #3b4656; color: #e6e6e6; }
+        .sort-dropdown {
+            position: absolute;
+            right: 0;
+            top: calc(100% + 6px);
+            background: #1b1f24;
+            border: 1px solid #2c3440;
+            border-radius: 8px;
+            min-width: 148px;
+            z-index: 200;
+            overflow: hidden;
+            box-shadow: 0 6px 20px rgba(0,0,0,0.5);
+        }
+        .sort-option {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            width: 100%;
+            padding: 9px 14px;
+            background: none;
+            border: none;
+            color: #9aa4b2;
+            font-size: 0.85rem;
+            text-align: left;
+            cursor: pointer;
+            transition: background 0.1s, color 0.1s;
+            box-sizing: border-box;
+        }
+        .sort-option:hover { background: rgba(255,255,255,0.04); color: #e6e6e6; }
+        .sort-option.active { color: #59c1ff; }
+        .sort-arrow { font-size: 0.72rem; opacity: 0.8; min-width: 10px; text-align: right; }
     </style>
 </head>
 <body>
@@ -61,7 +113,7 @@
             <span class="admin-badge">Admin</span>
             <a class="nav-pill" href="{{ url_for('dashboard.dashboard') }}">Dashboard</a>
             {% endif %}
-            <a class="nav-pill" href="{{ url_for('chat.chat') }}">💬 Chat</a>
+            <a class="nav-pill" href="{{ url_for('chat.chat') }}">Chat</a>
             {% if admin_mode %}
             <a class="nav-pill nav-pill-logout" href="{{ url_for('auth.logout') }}">Logout</a>
             {% else %}
@@ -95,7 +147,7 @@
         </label>
 
         <div id="drop-area" class="dropzone">
-            <div class="dropzone-icon">⬆</div>
+            <div class="dropzone-icon">&#8679;</div>
             <p id="dropzone-label">Drag &amp; drop files here, or <span class="dropzone-link">click to browse</span></p>
             <form id="upload-form" method="POST"
                   action="{{ url_for('files.upload_file') }}"
@@ -126,22 +178,45 @@
     </div>
     {% endif %}
 
-    <!-- SEARCH -->
-    <div class="search-wrap">
-        <input type="text" id="dir-search"
-               placeholder="Filter files…  (/ to focus)"
-               autocomplete="off" spellcheck="false">
-        <span class="search-clear" id="searchClear" style="display:none">✕</span>
+    <!-- Determine whether this directory contains any files (not just folders).
+         Sort control is only rendered when there is something to sort. -->
+    {% set has_files = items | selectattr('type', 'equalto', 'file') | list | length > 0 %}
+
+    <!-- SEARCH + SORT BAR -->
+    <div class="search-bar-row">
+        <div class="search-wrap">
+            <input type="text" id="dir-search"
+                   placeholder="Filter files…  (/ to focus)"
+                   autocomplete="off" spellcheck="false">
+            <span class="search-clear" id="searchClear" style="display:none">&#x2715;</span>
+        </div>
+
+        {% if has_files %}
+        <div class="sort-wrap" id="sortWrap">
+            <button class="sort-btn" id="sortBtn" aria-haspopup="true">Name &#8593;</button>
+            <div class="sort-dropdown" id="sortDropdown" style="display:none;" role="menu">
+                <button class="sort-option" data-key="name" role="menuitem">
+                    Name <span class="sort-arrow" id="arr-name"></span>
+                </button>
+                <button class="sort-option" data-key="size" role="menuitem">
+                    Size <span class="sort-arrow" id="arr-size"></span>
+                </button>
+                <button class="sort-option" data-key="date" role="menuitem">
+                    Date Added <span class="sort-arrow" id="arr-date"></span>
+                </button>
+            </div>
+        </div>
+        {% endif %}
     </div>
 
     <!-- FILE LIST -->
-    <div class="file-list">
+    <div class="file-list" id="fileList">
 
         {% if current_path %}
         <a class="file-row folder-row" href="{{ url_for('files.browse', path=parent_path) }}"
            data-search-skip>
             <div class="file-main">
-                <div class="thumb folder-thumb">📁</div>
+                <div class="thumb folder-thumb">&#128193;</div>
                 <div class="file-info">
                     <div class="file-name">..</div>
                 </div>
@@ -153,10 +228,10 @@
         {% for item in items %}
 
         {% if item.type == 'dir' %}
-        <!-- FOLDER -->
+        <!-- FOLDER — never sorted, always above files -->
         <a class="file-row folder-row" href="{{ url_for('files.browse', path=item.path) }}">
             <div class="file-main">
-                <div class="thumb folder-thumb">📁</div>
+                <div class="thumb folder-thumb">&#128193;</div>
                 <div class="file-info">
                     <div class="file-name" title="{{ item.name }}">{{ item.name }}</div>
                 </div>
@@ -165,21 +240,23 @@
         </a>
 
         {% else %}
-        <!-- FILE -->
-        <div class="file-row">
+        <!-- FILE — carries sort data attributes for client-side ordering -->
+        <div class="file-row"
+             data-name="{{ item.name | lower }}"
+             data-bytes="{{ item.file_size }}"
+             data-date="{{ item.upload_time }}">
             <div class="file-main">
 
                 {% if item.has_thumbnail %}
                 <img class="thumb"
                      src="{{ url_for('files.thumbnail', file_id=item.file_id) }}"
                      loading="lazy"
-                     onerror="this.outerHTML='<div class=\'thumb file-thumb\'>📄</div>'">
+                     onerror="this.outerHTML='<div class=\'thumb file-thumb\'>&#128196;</div>'">
                 {% else %}
-                <div class="thumb file-thumb">📄</div>
+                <div class="thumb file-thumb">&#128196;</div>
                 {% endif %}
 
                 <div class="file-info">
-                    <!-- File name / inline rename form -->
                     <div class="file-name" id="fname-{{ item.file_id }}" title="{{ item.name }}">
                         {{ item.name }}
                     </div>
@@ -189,9 +266,9 @@
                           method="POST"
                           action="{{ url_for('files.rename_file', file_id=item.file_id) }}">
                         <input type="text" name="name" value="{{ item.name }}" class="rename-input">
-                        <button type="submit" class="admin-btn" title="Save">✓</button>
+                        <button type="submit" class="admin-btn" title="Save">&#10003;</button>
                         <button type="button" class="admin-btn"
-                                onclick="cancelRename({{ item.file_id }})" title="Cancel">✕</button>
+                                onclick="cancelRename({{ item.file_id }})" title="Cancel">&#10005;</button>
                     </form>
                     {% endif %}
                     <div class="file-meta-mobile">{{ item.size }}</div>
@@ -200,7 +277,6 @@
 
             <div class="file-meta">{{ item.size }}</div>
 
-            <!-- Standard actions -->
             <div class="file-actions">
                 <a class="action-btn download-btn"
                    href="{{ url_for('files.download_file', file_id=item.file_id) }}">Download</a>
@@ -210,31 +286,29 @@
                 {% endif %}
             </div>
 
-            <!-- Hidden delete form — submitted via JS from the dropdown -->
             {% if admin_mode %}
             <form id="del-form-{{ item.file_id }}" method="POST"
                   action="{{ url_for('files.delete_file', file_id=item.file_id) }}"
                   style="display:none;"></form>
             {% endif %}
 
-            <!-- Three-dot context menu -->
             <div class="file-menu-wrap">
                 <button class="file-menu-btn"
                         onclick="toggleMenu(event, {{ item.file_id }})"
-                        title="More options">⋮</button>
+                        title="More options">&#8942;</button>
                 <div class="file-menu-dropdown hidden" id="menu-{{ item.file_id }}">
                     <button class="menu-item"
                             onclick="showInfo({{ item.file_id }}, {{ item.has_thumbnail | tojson }}); closeMenus()">
-                        <span class="menu-icon">ℹ</span> Info
+                        <span class="menu-icon">&#9432;</span> Info
                     </button>
                     {% if admin_mode %}
                     <button class="menu-item"
                             onclick="startRename({{ item.file_id }}); closeMenus()">
-                        <span class="menu-icon">✏</span> Rename
+                        <span class="menu-icon">&#9998;</span> Rename
                     </button>
                     <button class="menu-item menu-item-danger"
                             onclick='deleteFile({{ item.file_id }}, {{ item.name | tojson }})'>
-                        <span class="menu-icon">🗑</span> Delete
+                        <span class="menu-icon">&#128465;</span> Delete
                     </button>
                     {% endif %}
                 </div>
@@ -247,12 +321,12 @@
 
         <div id="searchEmpty" class="search-empty" style="display:none">No matching files</div>
     </div>
-</div>
+
+</div><!-- /.container -->
 
 <!-- INFO MODAL -->
 <div id="info-backdrop" class="info-backdrop" style="display:none;">
     <div class="info-modal">
-
         <div class="info-modal-head">
             <div class="info-fields">
                 <div class="info-row">
@@ -272,24 +346,32 @@
                 <img id="info-thumb" class="info-thumb" src="" alt="">
             </div>
         </div>
-
         <div id="info-meta-section" style="display:none;">
             <div class="info-divider"></div>
             <div id="info-meta-grid" class="info-meta-grid"></div>
         </div>
-
         <div class="info-modal-footer">
             <button class="info-close-btn" onclick="closeInfo()">Close</button>
         </div>
+    </div>
+</div>
 
+<!-- CUSTOM CONFIRM MODAL -->
+<div id="ls-modal-backdrop" class="ls-modal-backdrop" style="display:none;">
+    <div class="ls-modal">
+        <p class="ls-modal-msg" id="ls-modal-msg"></p>
+        <div class="ls-modal-actions">
+            <button class="ops-btn ops-btn-secondary" id="ls-modal-cancel">Cancel</button>
+            <button class="ops-btn ops-btn-danger"    id="ls-modal-ok">Delete</button>
+        </div>
     </div>
 </div>
 
 <script>
-/* ---------- Upload island ---------- */
+/* ── Upload island ─────────────────────────────────────────────────────────── */
 (function () {
     const uploadIsland = document.getElementById('drop-area');
-    if (!uploadIsland) return;   // guests don't see the island
+    if (!uploadIsland) return;
 
     const fileInput    = document.getElementById('file-input');
     const folderMode   = document.getElementById('folder-mode');
@@ -365,7 +447,7 @@
     }
 })();
 
-/* ---------- Inline rename ---------- */
+/* ── Inline rename ─────────────────────────────────────────────────────────── */
 function startRename(fileId) {
     const nameEl = document.getElementById('fname-' + fileId);
     const formEl = document.getElementById('rename-form-' + fileId);
@@ -381,7 +463,7 @@ function cancelRename(fileId) {
     document.getElementById('rename-form-' + fileId).classList.add('hidden');
 }
 
-/* ---------- Three-dot context menu ---------- */
+/* ── Three-dot context menu ────────────────────────────────────────────────── */
 function toggleMenu(e, fileId) {
     e.stopPropagation();
     const menu   = document.getElementById('menu-' + fileId);
@@ -396,10 +478,11 @@ function closeMenus() {
 
 document.addEventListener('click', closeMenus);
 
+/* ── Custom confirm modal ──────────────────────────────────────────────────── */
 function opsConfirm(message, destructive = false) {
     return new Promise(resolve => {
-        const backdrop = document.getElementById('ls-modal-backdrop');
-        const okBtn    = document.getElementById('ls-modal-ok');
+        const backdrop  = document.getElementById('ls-modal-backdrop');
+        const okBtn     = document.getElementById('ls-modal-ok');
         const cancelBtn = document.getElementById('ls-modal-cancel');
         document.getElementById('ls-modal-msg').textContent = message;
         okBtn.className = destructive ? 'ops-btn ops-btn-danger' : 'ops-btn ops-btn-primary';
@@ -424,80 +507,11 @@ async function deleteFile(fileId, name) {
     document.getElementById('del-form-' + fileId).submit();
 }
 
-/* ---------- Directory search ---------- */
-(function () {
-    const input      = document.getElementById('dir-search');
-    const clearBtn   = document.getElementById('searchClear');
-    const emptyMsg   = document.getElementById('searchEmpty');
-    // All filterable rows — excludes the [data-search-skip] parent (..) row
-    const rows       = Array.from(
-        document.querySelectorAll('.file-list .file-row:not([data-search-skip])')
-    );
-
-    function debounce(fn, ms) {
-        let t;
-        return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
-    }
-
-    function applyFilter(raw) {
-        const q = raw.trim().toLowerCase();
-
-        // Empty query — restore everything immediately, no debounce needed
-        if (!q) {
-            rows.forEach(r => r.classList.remove('search-hidden'));
-            emptyMsg.style.display = 'none';
-            clearBtn.style.display = 'none';
-            return;
-        }
-
-        clearBtn.style.display = '';
-        let visible = 0;
-        rows.forEach(r => {
-            const name = (r.querySelector('.file-name')?.textContent || '').toLowerCase();
-            const hide = !name.includes(q);
-            r.classList.toggle('search-hidden', hide);
-            if (!hide) visible++;
-        });
-        emptyMsg.style.display = visible === 0 ? 'block' : 'none';
-    }
-
-    const debouncedFilter = debounce(applyFilter, 200);
-
-    input.addEventListener('input', e => {
-        // Show/hide clear button immediately on every keystroke
-        clearBtn.style.display = e.target.value ? '' : 'none';
-        debouncedFilter(e.target.value);
-    });
-
-    clearBtn.addEventListener('click', () => {
-        input.value = '';
-        applyFilter('');
-        input.focus();
-    });
-
-    document.addEventListener('keydown', e => {
-        // '/' focuses the search bar unless the user is typing elsewhere
-        if (e.key === '/' && !['INPUT','TEXTAREA'].includes(document.activeElement.tagName)) {
-            e.preventDefault();
-            input.focus();
-            input.select();
-            return;
-        }
-        // Escape clears and blurs
-        if (e.key === 'Escape' && document.activeElement === input) {
-            input.value = '';
-            applyFilter('');
-            input.blur();
-        }
-    });
-})();
-
-
+/* ── Info modal ────────────────────────────────────────────────────────────── */
 async function showInfo(fileId, hasThumb) {
     const backdrop = document.getElementById('info-backdrop');
     backdrop.style.display = 'flex';
 
-    // Loading state
     document.getElementById('info-name').textContent  = 'Loading…';
     document.getElementById('info-size').textContent  = '—';
     document.getElementById('info-added').textContent = '—';
@@ -536,18 +550,171 @@ function closeInfo() {
 document.getElementById('info-backdrop').addEventListener('click', function(e) {
     if (e.target === this) closeInfo();
 });
-</script>
 
-<!-- CUSTOM CONFIRM MODAL (shared style with dashboard) -->
-<div id="ls-modal-backdrop" class="ls-modal-backdrop" style="display:none;">
-    <div class="ls-modal">
-        <p class="ls-modal-msg" id="ls-modal-msg"></p>
-        <div class="ls-modal-actions">
-            <button class="ops-btn ops-btn-secondary" id="ls-modal-cancel">Cancel</button>
-            <button class="ops-btn ops-btn-danger"    id="ls-modal-ok">Delete</button>
-        </div>
-    </div>
-</div>
+/* ── Directory search ──────────────────────────────────────────────────────── */
+(function () {
+    const input    = document.getElementById('dir-search');
+    const clearBtn = document.getElementById('searchClear');
+    const emptyMsg = document.getElementById('searchEmpty');
+    // All filterable rows — skip the [data-search-skip] parent (..) row
+    const rows     = Array.from(
+        document.querySelectorAll('.file-list .file-row:not([data-search-skip])')
+    );
+
+    function debounce(fn, ms) {
+        let t;
+        return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+    }
+
+    function applyFilter(raw) {
+        const q = raw.trim().toLowerCase();
+        if (!q) {
+            rows.forEach(r => r.classList.remove('search-hidden'));
+            emptyMsg.style.display = 'none';
+            clearBtn.style.display = 'none';
+            return;
+        }
+        clearBtn.style.display = '';
+        let visible = 0;
+        rows.forEach(r => {
+            const name = (r.querySelector('.file-name')?.textContent || '').toLowerCase();
+            const hide = !name.includes(q);
+            r.classList.toggle('search-hidden', hide);
+            if (!hide) visible++;
+        });
+        emptyMsg.style.display = visible === 0 ? 'block' : 'none';
+    }
+
+    const debouncedFilter = debounce(applyFilter, 200);
+
+    input.addEventListener('input', e => {
+        clearBtn.style.display = e.target.value ? '' : 'none';
+        debouncedFilter(e.target.value);
+    });
+
+    clearBtn.addEventListener('click', () => {
+        input.value = '';
+        applyFilter('');
+        input.focus();
+    });
+
+    document.addEventListener('keydown', e => {
+        if (e.key === '/' && !['INPUT','TEXTAREA'].includes(document.activeElement.tagName)) {
+            e.preventDefault();
+            input.focus();
+            input.select();
+            return;
+        }
+        if (e.key === 'Escape' && document.activeElement === input) {
+            input.value = '';
+            applyFilter('');
+            input.blur();
+        }
+    });
+})();
+
+/* ── Directory sort ────────────────────────────────────────────────────────── */
+(function () {
+    const sortBtn      = document.getElementById('sortBtn');
+    const sortDropdown = document.getElementById('sortDropdown');
+    if (!sortBtn) return;   // directory has no files, sort not rendered
+
+    const fileList = document.getElementById('fileList');
+    // Only file rows carry data-bytes — folder rows are excluded
+    const fileRows = Array.from(
+        fileList.querySelectorAll('.file-row:not(.folder-row):not([data-search-skip])')
+    );
+
+    const LABELS = { name: 'Name', size: 'Size', date: 'Date' };
+    const UP = '&#8593;', DOWN = '&#8595;';
+
+    // Persist across navigation within the session
+    let sortKey = localStorage.getItem('ls-sort-key') || 'name';
+    let sortDir = localStorage.getItem('ls-sort-dir') || 'asc';
+
+    function save() {
+        localStorage.setItem('ls-sort-key', sortKey);
+        localStorage.setItem('ls-sort-dir', sortDir);
+    }
+
+    function getValue(row, key) {
+        if (key === 'name')  return (row.dataset.name  || '').toLowerCase();
+        if (key === 'size')  return parseInt(row.dataset.bytes, 10) || 0;
+        if (key === 'date')  return row.dataset.date || '';
+        return '';
+    }
+
+    function applySort() {
+        const sorted = [...fileRows].sort((a, b) => {
+            const va = getValue(a, sortKey);
+            const vb = getValue(b, sortKey);
+            let cmp = typeof va === 'number'
+                ? va - vb
+                : va.localeCompare(vb, undefined, { numeric: true, sensitivity: 'base' });
+            return sortDir === 'asc' ? cmp : -cmp;
+        });
+        // Re-append in sorted order; folder rows are earlier in the DOM and unaffected
+        sorted.forEach(r => fileList.appendChild(r));
+        // Keep the no-results sentinel last
+        const sentinel = document.getElementById('searchEmpty');
+        if (sentinel) fileList.appendChild(sentinel);
+    }
+
+    function updateUI() {
+        // Button label
+        sortBtn.innerHTML = `${LABELS[sortKey]} ${sortDir === 'asc' ? UP : DOWN}`;
+        // Option arrows
+        ['name','size','date'].forEach(k => {
+            const arrow = document.getElementById('arr-' + k);
+            const opt   = arrow?.closest('.sort-option');
+            if (!arrow || !opt) return;
+            if (k === sortKey) {
+                opt.classList.add('active');
+                arrow.innerHTML = sortDir === 'asc' ? UP : DOWN;
+            } else {
+                opt.classList.remove('active');
+                arrow.innerHTML = '';
+            }
+        });
+    }
+
+    function selectKey(key) {
+        if (key === sortKey) {
+            sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+        } else {
+            sortKey = key;
+            sortDir = 'asc';
+        }
+        save();
+        updateUI();
+        applySort();
+        closeDrop();
+    }
+
+    function closeDrop() { sortDropdown.style.display = 'none'; }
+
+    sortBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        const open = sortDropdown.style.display !== 'none';
+        sortDropdown.style.display = open ? 'none' : 'block';
+        if (!open) updateUI();
+    });
+
+    document.querySelectorAll('.sort-option').forEach(opt => {
+        opt.addEventListener('click', () => selectKey(opt.dataset.key));
+    });
+
+    // Close when clicking outside the sort widget
+    document.addEventListener('click', e => {
+        const wrap = document.getElementById('sortWrap');
+        if (wrap && !wrap.contains(e.target)) closeDrop();
+    });
+
+    // Initialise on load
+    updateUI();
+    applySort();
+})();
+</script>
 
 </body>
 </html>

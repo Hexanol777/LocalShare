@@ -140,6 +140,8 @@ def browse():
                 'type':          'file',
                 'path':          rel,
                 'size':          human_readable_size(db_file.file_size),
+                'file_size':     db_file.file_size,
+                'upload_time':   db_file.upload_time.isoformat(),
                 'streamable':    ext in STREAMABLE_EXTENSIONS,
                 'extension':     ext,
                 'has_thumbnail': ext in IMAGE_EXTENSIONS or ext in VIDEO_EXTENSIONS,
