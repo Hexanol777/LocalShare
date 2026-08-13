@@ -256,6 +256,32 @@ function initPlayer() {
     const fileId = {{ file_id }};
     const socket = io();
 
+    // ============================================================
+    // PLAYBACK FAILURE FALLBACK
+    // Triggered when the browser cannot decode or find support for
+    // the format/codec (codes 3 = MEDIA_ERR_DECODE, 4 = not supported).
+    // Replaces the player with the download card without a page reload.
+    // ============================================================
+    video.addEventListener('error', function () {
+        const code = video.error && video.error.code;
+        if (code !== 3 && code !== 4) return;  // network/abort errors — ignore
+
+        const fileName = {{ file_name | tojson }};
+        const dlUrl    = {{ url_for('files.download_file', file_id=file_id) | tojson }};
+
+        document.getElementById('playerWrap').innerHTML =
+            '<div class="unsupported-wrap">' +
+              '<p class="unsupported-title">This format cannot be played in this browser</p>' +
+              '<p class="unsupported-sub">' + fileName + '</p>' +
+              '<a class="unsupported-dl" href="' + dlUrl + '">Download file</a>' +
+            '</div>';
+
+        const controls = document.querySelector('.stream-controls');
+        if (controls) controls.style.display = 'none';
+        const viewers = document.getElementById('viewerPanel');
+        if (viewers) viewers.style.display = 'none';
+    });
+
     // ---------- TS: wire up mpegts.js ----------
     {% if player_type == 'ts' %}
     if (typeof mpegts !== 'undefined' && mpegts.getFeatureList().mseLivePlayback) {

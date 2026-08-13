@@ -58,6 +58,13 @@ PLAYER_NATIVE_VIDEO = {'.mp4', '.webm', '.ogg', '.mov'}
 PLAYER_TS_VIDEO     = {'.ts'}
 PLAYER_NATIVE_AUDIO = {'.mp3', '.flac', '.wav', '.aac', '.m4a', '.m4b', '.opus', '.oga'}
 
+# Formats to attempt native playback for — a superset of PLAYER_NATIVE_VIDEO.
+# Includes .mkv because Chrome/Firefox natively handle it for H.264/VP9/Opus.
+# The stream.html video.onerror handler shows the fallback card if the specific
+# browser/codec combination can't actually decode the file, so no format is
+# pre-emptively rejected on the server side.
+PLAYER_TRY_VIDEO = PLAYER_NATIVE_VIDEO | {'.mkv', '.m4v'}
+
 
 # ---------- Helpers ----------
 
@@ -513,7 +520,9 @@ def stream_page(file_id):
         player_type = 'ts'
     elif ext in PLAYER_NATIVE_AUDIO:
         player_type = 'audio'
-    elif ext in PLAYER_NATIVE_VIDEO:
+    elif ext in PLAYER_TRY_VIDEO:
+        # Serve for native playback; stream.html video.onerror handles failure
+        # gracefully so each browser decides based on its own codec support.
         player_type = 'video'
     else:
         player_type = 'unsupported'
