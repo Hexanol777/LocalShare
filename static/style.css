@@ -10,6 +10,7 @@ body {
     color: #e6e6e6;
     font-family: system-ui, sans-serif;
     margin: 0;
+    overflow-x: hidden;  /* prevent any overflowing child from expanding page width */
 }
 
 /* ---------- CONTAINER ---------- */
@@ -407,6 +408,37 @@ body {
     .upload-target        { max-width: 100%; }
 
     .header-box { flex-direction: column; gap: 10px; text-align: center; }
+
+    /* Nav pills wrap onto a second line instead of overflowing the header */
+    .header-actions {
+        flex-wrap: wrap;
+        justify-content: center;
+    }
+
+    /* Breadcrumbs: scroll horizontally within their own box rather than
+       expanding the page. Long folder paths (e.g. deep media directories)
+       are the most common mobile overflow culprit. */
+    .breadcrumbs {
+        overflow-x: auto;
+        white-space: nowrap;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    /* Stream page controls: tighten buttons so they wrap cleanly on narrow screens */
+    .ctrl-btn {
+        padding: 7px 11px;
+        font-size: 0.85rem;
+    }
+
+    /* Hide the verbose sub-status label — the CC button state communicates enough */
+    .sub-status { display: none; }
+
+    /* Topbar filename: give it less room so the nav links don't get squeezed */
+    .topbar-title { max-width: 40%; }
+
+    /* Sort dropdown: open upward on mobile to avoid clipping at bottom of viewport.
+       On desktop this is already the case; this reinforces it at narrow widths. */
+    .sort-dropdown { min-width: 130px; }
 }
 
 
