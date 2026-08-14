@@ -568,18 +568,54 @@ function initPlayer() {
         openDrop(subBtn, subDropdown);
     });
 
-    // Reflect initial state (server tracks may already have one active via `default`)
+    // Sync CC button state to match current textTracks selection
     function syncSubBtnState() {
         const active = Array.from(video.textTracks).find(t => t.mode === 'showing');
         if (active) {
             subBtn.classList.add('active');
             subStatus.textContent = active.label || 'Subtitles on';
+        } else {
+            subBtn.classList.remove('active');
+            subStatus.textContent = '';
         }
     }
-    video.addEventListener('loadedmetadata', syncSubBtnState);
-    if (video.readyState >= 1) syncSubBtnState();
+
+    // ── Key fix: textTracks are populated ASYNCHRONOUSLY for embedded
+    // container tracks (MKV, MP4). They are NOT available at loadedmetadata.
+    // The addtrack event is the correct hook — it fires each time the browser
+    // parses a new embedded track from the container, which may happen during
+    // buffering, well after the initial metadata load.
+    video.textTracks.addEventListener('addtrack', function () {
+        buildSubMenu();     // add the new track to the dropdown immediately
+        syncSubBtnState();  // update CC button if a track is auto-selected
+    });
+
+    // Keep our UI in sync when the user switches tracks via the browser's
+    // own native controls (the ⋮ menu in Chrome).
+    video.textTracks.addEventListener('change', function () {
+        syncSubBtnState();
+    });
+
+    // Fallback checkpoints — belt-and-suspenders for browsers that batch
+    // track discovery differently. loadeddata and canplay fire progressively
+    // later than loadedmetadata, catching any stragglers.
+    ['loadedmetadata', 'loadeddata', 'canplay'].forEach(evt =>
+        video.addEventListener(evt, function () {
+            if (video.textTracks.length) {
+                buildSubMenu();
+                syncSubBtnState();
+            }
+        })
+    );
+    if (video.readyState >= 1) { buildSubMenu(); syncSubBtnState(); }
 
     // ── Audio dropdown ───────────────────────────────────────────
+    // NOTE: video.audioTracks is NOT implemented in Chrome/Firefox — the
+    // property exists but always returns length 0 even when the file has
+    // multiple audio streams. Chrome handles audio switching internally via
+    // its native controls (the ⋮ button). We cannot replicate this in JS
+    // for Chromium browsers. The Audio button will only appear in Safari,
+    // which does implement audioTracks properly.
 
     function buildAudioMenu() {
         audioDropdown.innerHTML = '';
@@ -605,14 +641,20 @@ function initPlayer() {
         openDrop(audioBtn, audioDropdown);
     });
 
-    function initAudioTracks() {
-        const tracks = video.audioTracks;
-        if (tracks && tracks.length > 1) {
+    function checkAudioTracks() {
+        if (video.audioTracks && video.audioTracks.length > 1) {
             audioWrap.style.display = '';
         }
     }
-    video.addEventListener('loadedmetadata', initAudioTracks);
-    if (video.readyState >= 1) initAudioTracks();
+
+    // addtrack fires in Safari when audio tracks are discovered asynchronously
+    if (video.audioTracks) {
+        video.audioTracks.addEventListener('addtrack', checkAudioTracks);
+    }
+
+    video.addEventListener('loadedmetadata', checkAudioTracks);
+    video.addEventListener('loadeddata', checkAudioTracks);
+    if (video.readyState >= 1) checkAudioTracks();
 
     // ── Local subtitle file ingestion ────────────────────────────
 
