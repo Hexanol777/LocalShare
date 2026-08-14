@@ -477,6 +477,97 @@ def _get_next_file(file):
     return None
 
 
+# Text-based subtitle codecs ffmpeg can convert to WebVTT.
+# Bitmap-based formats (hdmv_pgs_subtitle, dvd_subtitle) are excluded as
+# they cannot be meaningfully converted to text WebVTT.
+EXTRACTABLE_SUBTITLE_CODECS = {
+    'subrip', 'srt', 'ass', 'ssa', 'webvtt', 'mov_text',
+    'text', 'microdvd', 'subviewer', 'jacosub', 'sami',
+}
+
+
+def _probe_embedded_subtitles(file_path):
+    """
+    Use ffprobe to list extractable text subtitle streams inside a video file.
+    Returns [{'label': str, 'stream_idx': int}, …]
+    stream_idx is the subtitle-specific index (0:s:N in ffmpeg notation).
+    """
+    data          = _ffprobe(file_path)
+    results       = []
+    sub_idx       = 0   # counts subtitle streams only (for ffmpeg 0:s:N)
+
+    for stream in data.get('streams', []):
+        if stream.get('codec_type') != 'subtitle':
+            continue
+
+        current_idx  = sub_idx
+        sub_idx     += 1   # increment for ALL subtitle streams, even skipped ones
+
+        codec = stream.get('codec_name', '').lower()
+        if codec not in EXTRACTABLE_SUBTITLE_CODECS:
+            continue    # skip bitmap subtitles
+
+        tags  = stream.get('tags', {})
+        lang  = tags.get('language', '').strip()
+        title = tags.get('title', '').strip()
+
+        if title and lang and lang not in ('und', ''):
+            label = f'{title} ({lang.upper()})'
+        elif title:
+            label = title
+        elif lang and lang not in ('und', ''):
+            label = lang.upper()
+        else:
+            label = f'Track {current_idx + 1}'
+
+        results.append({'label': label, 'stream_idx': current_idx})
+
+    return results
+
+
+@files_bp.route('/subtitle/<int:file_id>/embedded/<int:stream_idx>')
+def serve_embedded_subtitle(file_id, stream_idx):
+    """
+    Extract a single embedded subtitle stream from a video container and
+    serve it as WebVTT. Uses ffmpeg's 0:s:N stream selector.
+    This bypasses the browser's unreliable textTracks API for embedded
+    MKV/MP4 streams by doing the extraction entirely server-side.
+    """
+    if not FFMPEG_PATH:
+        abort(501)
+
+    if stream_idx < 0:
+        abort(400)
+
+    file      = File.query.get_or_404(file_id)
+    file_path = os.path.join(current_app.config['UPLOAD_FOLDER'], file.stored_name)
+
+    if not os.path.exists(file_path):
+        abort(404)
+
+    cmd = [
+        FFMPEG_PATH,
+        '-i', file_path,
+        '-map', f'0:s:{stream_idx}',
+        '-f', 'webvtt',
+        'pipe:1',
+    ]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=30)
+    except subprocess.TimeoutExpired:
+        abort(504)
+
+    if result.returncode != 0:
+        abort(500)
+
+    vtt = result.stdout.decode('utf-8', errors='ignore')
+    resp = Response(vtt, mimetype='text/vtt')
+    resp.headers['Access-Control-Allow-Origin'] = '*'
+    resp.headers['Cache-Control']               = 'public, max-age=3600'
+    return resp
+
+
 @files_bp.route('/subtitle/<int:file_id>')
 def serve_subtitle(file_id):
     """
@@ -528,9 +619,31 @@ def stream_page(file_id):
         player_type = 'unsupported'
 
     # Subtitle auto-detection and next-episode lookup — video types only
-    is_video         = player_type in ('video', 'ts')
-    server_subtitles = _get_related_subtitles(file) if is_video else []
-    next_file        = _get_next_file(file) if is_video or player_type == 'audio' else None
+    is_video  = player_type in ('video', 'ts')
+    next_file = _get_next_file(file) if is_video or player_type == 'audio' else None
+
+    server_subtitles = []
+    if is_video:
+        file_path = os.path.join(current_app.config['UPLOAD_FOLDER'], file.stored_name)
+
+        # 1. Embedded subtitle streams — probed from the container via ffprobe.
+        #    These are served by the dedicated /subtitle/<id>/embedded/<idx> route
+        #    which extracts them on-demand via ffmpeg. This sidesteps the browser's
+        #    unreliable textTracks API for embedded MKV/MP4 streams.
+        if FFMPEG_PATH:
+            for s in _probe_embedded_subtitles(file_path):
+                server_subtitles.append({
+                    'label': s['label'],
+                    'src':   url_for('files.serve_embedded_subtitle',
+                                     file_id=file_id, stream_idx=s['stream_idx']),
+                })
+
+        # 2. External subtitle files co-located with the video (e.g. Ep01.en.srt).
+        for s in _get_related_subtitles(file):
+            server_subtitles.append({
+                'label': s['label'],
+                'src':   url_for('files.serve_subtitle', file_id=s['file_id']),
+            })
 
     return render_template('stream.html',
                            file_id=file_id,

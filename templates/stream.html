@@ -194,7 +194,7 @@
         {% for sub in server_subtitles %}
         <track kind="subtitles"
                label="{{ sub.label }}"
-               src="{{ url_for('files.serve_subtitle', file_id=sub.file_id) }}"
+               src="{{ sub.src }}"
                {% if loop.first %}default{% endif %}>
         {% endfor %}
     </video>
