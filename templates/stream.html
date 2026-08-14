@@ -128,6 +128,21 @@
 
         .track-divider { height: 1px; background: #2c3440; margin: 3px 0; }
 
+        /* ── Subtitle cue rendering ──────────────────────────────────── */
+        /* ::cue controls the browser's native <track> subtitle display.  */
+        /* Multi-direction text-shadow fakes an outline since             */
+        /* -webkit-text-stroke is not supported inside ::cue.             */
+        ::cue {
+            background-color: transparent;
+            color: #ffffff;
+            text-shadow:
+                -1px -1px 0   rgba(0,0,0,0.9),
+                 1px -1px 0   rgba(0,0,0,0.9),
+                -1px  1px 0   rgba(0,0,0,0.9),
+                 1px  1px 0   rgba(0,0,0,0.9),
+                 0    0   4px rgba(0,0,0,0.6);
+        }
+
         /* ── Player-wrap drag-over highlight ─────────────────────────── */
         .player-wrap.drag-over { outline: 2px dashed #2a6af5; outline-offset: -4px; }
 
