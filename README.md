@@ -1,7 +1,7 @@
 # LocalShare
 
 A self-hosted LAN media server built for home and small-office networks. Run it on any machine, point your phone or laptop to `http://share.local`, and instantly browse, stream, and upload files — no cloud, no accounts, no configuration.
-
+The philosophy is LAN-first, friction-free and self-contained.
 ---
 
 ## How it works
